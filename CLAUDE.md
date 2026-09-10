@@ -146,6 +146,12 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   baths/charges, will truncate any future long-running `<kind>_event`); adjacent lane hit-targets
   (8px minimum) overlap at 7d+ so hover can pick a neighbour; no loading state distinct from
   "no events"; first paint shifts 44px when the lanes mount. UX de-clutter / drill-down pages: #25.
+- **Heat-pump cooling alert (shipped 2026-09-10)** — `HVAC_COOL_ALERT=1` is set on the Pi for
+  heating season; **set it to 0 next spring** or it emails every warm day. First real read is the
+  2026-09-11 7am run (first day after the Stiebel comfort setpoint went 22.5→24°C). No thermostat
+  ground truth exists: Honeywells aren't in HA and the Resideo developer application (2026-04-09,
+  re-pinged 2026-09-10) is unanswered — if it lands, gate the classifier on `hvac_mode` from the
+  API. Thread: `~/src/.handoff/home-assistant-span.md`.
 - **Presence/occupancy signal from lights-circuit baseline deviation** — new idea, not yet built.
   `docs/superpowers/notes/2026-09-04-vacation-and-dhw-ground-truth.md` found the vacant-period baseline for "Lights /
   Downstairs" stable to ±2W night over night, and a real visitor broke it by 2–3x with bedroom
