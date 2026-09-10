@@ -65,7 +65,10 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     weather data degrades intervals to `ambiguous`. Writes no health point and isn't in
     `pi-health.json`; `/api/health` does check `hvac_mode` freshness (≤75 min, since 2026-09-05).
   - `daily_report.py` - Weekly energy briefing (Mondays) + daily anomaly-check email + daily
-    data-gap alert via Resend, all at 7am
+    data-gap alert via Resend, all at 7am; plus an opt-in daily heat-pump cooling alert
+    (`HVAC_COOL_ALERT=1` in `pi/.env`, ≥15 min of `cool` intervals yesterday) — on for heating
+    season, off for cooling season. Added 2026-09-10 after the Stiebel ran cooling on its own
+    comfort setpoint (since raised 22.5→24°C) while the Honeywells sat on heat.
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
     `telemetry` bucket (#16)

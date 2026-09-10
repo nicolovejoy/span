@@ -25,6 +25,8 @@ from influxdb_client import InfluxDBClient
 from rates import ENERGY_RATE, BASE_CHARGE_DAILY
 import report_baseline as rb
 import collector_health as ch
+import attribution
+from hvac_modes import COOL_MIN_TEMP_F
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +49,12 @@ STATE_PATH = Path(os.getenv("REPORT_STATE_PATH", "/app/state/anomaly_state.json"
 # losses; any single day's Car usage under this is normal EV behavior, not an
 # anomaly, regardless of how irregular the historical baseline looks.
 EV_FULL_CHARGE_KWH = float(os.getenv("EV_FULL_CHARGE_KWH", "120"))
+# Daily "the heat pump cooled yesterday" alert off the hvac_mode timeline.
+# Off by default: in cooling season it would fire every warm day. Flip it on
+# for heating season, when any `cool` interval means the Stiebel ran cooling
+# on its own setpoint while the thermostats sat on heat (2026-09-10).
+HVAC_COOL_ALERT = os.getenv("HVAC_COOL_ALERT", "0").lower() in ("1", "true", "yes")
+HVAC_COOL_ALERT_MIN_MINUTES = int(os.getenv("HVAC_COOL_ALERT_MIN_MINUTES", "15"))
 
 
 def flux_ts(dt: datetime) -> str:
@@ -1304,6 +1312,96 @@ def generate_gap_check(client: InfluxDBClient, target_date: date):
     send_email(html, subject)
 
 
+# ---------- daily heat-pump cooling alert ----------
+
+@dataclass
+class CoolStats:
+    minutes: int
+    runs: int
+    kwh: float
+    first_start: datetime | None
+
+
+def _hvac_mode_flux(start: str, stop: str) -> str:
+    return f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "hvac_mode")
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"])
+'''
+
+
+def query_hvac_mode_intervals(query_api, start: str, stop: str) -> list[dict]:
+    """One dict per 5-min hvac_mode interval: start, mode, energy_kwh (the
+    single nonzero energy_<mode>_kwh field). Same shape hvac_classifier and
+    attribution.runs consume."""
+    out = []
+    for table in query_api.query(_hvac_mode_flux(start, stop), org=INFLUXDB_ORG):
+        for rec in table.records:
+            v = rec.values
+            out.append({
+                "start": rec.get_time(),
+                "mode": v.get("mode"),
+                "energy_kwh": sum(
+                    v.get(k) or 0.0 for k in v if k.startswith("energy_") and k.endswith("_kwh")),
+            })
+    out.sort(key=lambda i: i["start"])
+    return out
+
+
+def cool_stats(intervals: list[dict]) -> CoolStats:
+    """Pure: total cool minutes, number of contiguous cool runs (a timeline
+    gap breaks a run, per attribution.runs), energy, and first run start."""
+    cool_runs = attribution.runs(intervals, "cool")
+    n_intervals = sum(len(r) for r in cool_runs)
+    return CoolStats(
+        minutes=n_intervals * attribution.INTERVAL_MINUTES,
+        runs=len(cool_runs),
+        kwh=sum(i.get("energy_kwh") or 0.0 for r in cool_runs for i in r),
+        first_start=cool_runs[0][0]["start"] if cool_runs else None,
+    )
+
+
+def cool_alert_needed(stats: CoolStats) -> bool:
+    return stats.minutes >= HVAC_COOL_ALERT_MIN_MINUTES
+
+
+def render_cool_email(target_date: date, stats: CoolStats) -> tuple[str, str]:
+    """(subject, html). Subject carries the whole message, like the gap alert."""
+    runs_word = "run" if stats.runs == 1 else "runs"
+    first_local = stats.first_start.astimezone(LOCAL_TZ).strftime("%H:%M") if stats.first_start else "?"
+    subject = (f"❄️ Heat pump cooled {_fmt_duration(stats.minutes * 60)} yesterday "
+               f"({stats.runs} {runs_word}, first {first_local})")
+    html = f'''<!DOCTYPE html>
+<html><head><style>{CSS}</style></head>
+<body>
+<h2>Heat pump cooling &mdash; {target_date.strftime("%A, %B %-d")}</h2>
+<p>{_fmt_duration(stats.minutes * 60)} of <code>cool</code>-labeled intervals across
+{stats.runs} {runs_word}, first starting {first_local} Pacific, {stats.kwh:.1f} kWh.</p>
+<p>The classifier labels a non-hot-water heat-pump run <code>cool</code> whenever the outdoor
+temperature is at or above {COOL_MIN_TEMP_F:.0f}&deg;F &mdash; it has no
+thermostat signal. If the thermostats are on heat, the Stiebel ran cooling on its own comfort
+setpoint. Set <code>HVAC_COOL_ALERT=0</code> in <code>pi/.env</code> for cooling season.</p>
+</body></html>'''
+    return subject, html
+
+
+def generate_cool_check(client: InfluxDBClient, target_date: date):
+    """Runs daily for `target_date` (the previous local day). Sends nothing
+    unless HVAC_COOL_ALERT is on and cool time crossed the threshold."""
+    query_api = client.query_api()
+    start, stop = local_day_utc_range(target_date)
+    intervals = query_hvac_mode_intervals(query_api, flux_ts(start), flux_ts(stop))
+    stats = cool_stats(intervals)
+    logger.info(f"{target_date}: cool {_fmt_duration(stats.minutes * 60)} in {stats.runs} runs "
+               f"({len(intervals)} hvac_mode intervals)")
+    if not cool_alert_needed(stats):
+        return
+    subject, html = render_cool_email(target_date, stats)
+    send_email(html, subject)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Weekly energy report + daily anomaly check")
     parser.add_argument("--loop", action="store_true",
@@ -1317,6 +1415,9 @@ def main():
     parser.add_argument("--gap-date", type=str,
                        help="Run the collector data-gap check for this date (YYYY-MM-DD) — "
                             "on-demand test")
+    parser.add_argument("--cool-date", type=str,
+                       help="Run the heat-pump cooling check for this date (YYYY-MM-DD) — "
+                            "on-demand test (ignores HVAC_COOL_ALERT)")
     args = parser.parse_args()
 
     for var, name in [(INFLUXDB_TOKEN, "INFLUXDB_TOKEN"), (RESEND_API_KEY, "RESEND_API_KEY"),
@@ -1339,6 +1440,10 @@ def main():
         target = datetime.strptime(args.gap_date, "%Y-%m-%d").date()
         logger.info(f"Running data-gap check for {args.gap_date}")
         generate_gap_check(client, target)
+    elif args.cool_date:
+        target = datetime.strptime(args.cool_date, "%Y-%m-%d").date()
+        logger.info(f"Running cooling check for {args.cool_date}")
+        generate_cool_check(client, target)
     elif args.loop:
         logger.info(f"Loop mode: anomaly check daily, weekly briefing Mondays, at {REPORT_HOUR}:00")
         while True:
@@ -1354,6 +1459,11 @@ def main():
                 generate_gap_check(client, yesterday)
             except Exception as e:
                 logger.error(f"Gap check failed: {e}")
+            if HVAC_COOL_ALERT:
+                try:
+                    generate_cool_check(client, yesterday)
+                except Exception as e:
+                    logger.error(f"Cooling check failed: {e}")
             if datetime.now().weekday() == 0:   # Monday: yesterday closed last week
                 try:
                     generate_weekly_report(client, local_week_start(yesterday))
