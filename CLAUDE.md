@@ -81,7 +81,12 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     to this stack's `pi_default` network). **Restarting it blips all of them.** The `span.` →
     `web:3000` route is stale (web retired 2026-08-13; dashboard cleanup optional). The token is a
     compose secret read via `--token-file` (2026-09-19, prompt-lab #55) — never re-add `--token`
-    or `env_file: .env` to this service; either puts secrets back in `docker inspect`.
+    or `env_file: .env` to this service; either puts secrets back in `docker inspect`. Source of
+    truth for the token: 1Password `dev-secrets` → `phrpi-cloudflared-tunnel-token` (field
+    `credential`); the live copy is `CLOUDFLARE_TUNNEL_TOKEN` in the Pi's `pi/.env` (the Pi has no
+    `op`, and there is no `pi/.env.tpl`). To rotate: Cloudflare dashboard → tunnel → Add a connector
+    → Refresh token, update both places, then `docker compose up -d --force-recreate --no-deps
+    cloudflared` (`--force-recreate` because compose doesn't notice a changed secret value alone).
   - `grafana/provisioning/` - Auto-configured datasource + dashboards, incl. `pi-health.json`
     (uid `pi-health`) — collector poll failure rate, host + container metrics (#16)
 - `web/` - Next.js power-explorer dashboard (Vercel-hosted, see § web/)
