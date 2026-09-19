@@ -74,6 +74,14 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     `telemetry` bucket (#16)
   - `docker-compose.yml` - InfluxDB, Grafana, collector, bath-detector, charge-detector,
     weather, hvac-classifier, daily-report, telegraf, cloudflared
+  - `cloudflared` — the `phrpi` tunnel is **shared beyond SPAN** and its routes are
+    dashboard-managed (Zero Trust → Tunnels → phrpi → Published application routes, read
+    2026-09-19): `grafana.` → `grafana:3000`, `influx.` → `influxdb:8086`, and `koma.` /
+    `michael.` → `nudge-board:80` (the nudge project: its own compose project `deploy`, attached
+    to this stack's `pi_default` network). **Restarting it blips all of them.** The `span.` →
+    `web:3000` route is stale (web retired 2026-08-13; dashboard cleanup optional). The token is a
+    compose secret read via `--token-file` (2026-09-19, prompt-lab #55) — never re-add `--token`
+    or `env_file: .env` to this service; either puts secrets back in `docker inspect`.
   - `grafana/provisioning/` - Auto-configured datasource + dashboards, incl. `pi-health.json`
     (uid `pi-health`) — collector poll failure rate, host + container metrics (#16)
 - `web/` - Next.js power-explorer dashboard (Vercel-hosted, see § web/)
