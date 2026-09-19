@@ -155,9 +155,14 @@ services:
     image: cloudflare/cloudflared:2026.3.0
     container_name: cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    env_file:
-      - .env
+    # Token goes in as a file (built from CLOUDFLARE_TUNNEL_TOKEN in .env, see
+    # `secrets:` below), not argv/env: `--token ${...}` put it in plaintext in
+    # `ps` and `docker inspect`, and `env_file: .env` gave this internet-facing
+    # container every secret in the file (prompt-lab #55). Never re-add
+    # `--token`; it overrides `--token-file`.
+    command: tunnel --no-autoupdate run --token-file /run/secrets/tunnel_token
+    secrets:
+      - tunnel_token
     depends_on:
       - grafana
 
@@ -186,3 +191,7 @@ volumes:
   influxdb-config:
   grafana-data:
   report-state:
+
+secrets:
+  tunnel_token:
+    environment: CLOUDFLARE_TUNNEL_TOKEN
