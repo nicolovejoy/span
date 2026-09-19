@@ -23,7 +23,8 @@ cd pi && docker compose up -d
 
 ## Machine roles (decided 2026-08-13)
 
-- **Pi (`phrpi`, 192.168.5.50)** — single source of truth. Runs the whole Docker
+- **Pi (`phrpi.local` → 192.168.4.53 on eth0; 192.168.5.50 is its wlan0 out-of-band backup,
+  which `status.sh` uses as a fallback)** — single source of truth. Runs the whole Docker
   stack (dashboard itself is Vercel-hosted) + nightly restic backup. Stays this way deliberately: low blast radius,
   rebuilds from git.
 - **Mini** (closet, ethernet to Pi, always-on) — no SPAN services. Observer/backup
