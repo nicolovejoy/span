@@ -205,3 +205,41 @@ none.
 **Follow-up, out of scope here:** a health point when an hourly counter delta
 exceeds its integral by more than a few kWh on several circuits at once, so the
 next panel restart pages instead of emailing a 3,000 kWh Monday.
+
+## Fix applied (2026-10-27, same day)
+
+**A changed shape before shipping.** The first probe of "50 kW × elapsed" threw
+away legitimate energy: SPAN's meter lands energy in batches up to ~15 min
+apart, so a single 30 s sample can carry a 2,963 Wh lump on the charger (355 kW
+if read as power) or 470 Wh on the heat pump. The shipped rule
+(`pi/influx_tasks/*.flux`, commit 686ee01) is: previous reading non-zero, and
+step ≤ 10 kWh + 50 kW × elapsed. Probe over the restart hour, a batch hour, a
+normal charging hour and the 24.8 h collector gap of 2026-05-10: identical to the
+old numbers everywhere except the restart hour, where every jump is gone
+(table in `pi/influx_tasks/README.md` § "Panel restarts that rebase the
+counter"). Tasks re-provisioned on the Pi, Oct 26–27 rollups rebuilt.
+
+**B shipped as proposed** (commit dd333c6): closed sessions only, 12 h lookback,
+exact-start dedupe, chunked streaming backfill. 65 truncated events deleted,
+86 rebuilt from raw.
+
+Before / after, charger circuit and sessions, kWh:
+
+| | before | after |
+|---|---|---|
+| Oct 2026 circuit counter (to the 27th) | 127.0 | 79.8 |
+| HVAC on Mon Oct 26 (anomaly email) | 3,052.9 | normal |
+| Sep sessions / Sep circuit | 92 / 208 (44%) | 206.9 / 208.3 (99%) |
+| Jun sessions / Jun circuit | 193 / 364 | 361.7 / 364 |
+| Sessions, Jan–Oct | 65 events, mostly 30–40 min | 86 events, 30–356 min |
+
+**Not changed:** Unmonitored / `queryPanelKwh`; the Car layer definition.
+
+**Deploy lessons:** `influx task update` in the shipped CLI takes neither
+`--org` nor `-` for stdin (`provision_influx_tasks.sh` fixed, two commits);
+`docker compose run` without `--no-deps` recreated the `influxdb` container
+mid-backfill (README recipe fixed). No data lost either time.
+
+**Ground truth still open:** no external meter was compared. Counter and
+integral agreeing within 0.5% on every charging day is the evidence; a Tesla
+Wall Connector Gen 3 local endpoint, if that's the hardware, would close it.

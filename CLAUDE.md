@@ -55,7 +55,20 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     (#14 sub-project 2); shower/laundry predicates are natural follow-on additions here
   - `bath_detector.py` - Detects bath events from the `hvac_mode` timeline (re-based off raw
     circuit reads, #14 sub-project 2)
-  - `charge_detector.py` - Detects EV charging sessions (10min loop)
+  - `charge_detector.py` - Detects EV charging sessions (10min loop over a 12h lookback;
+    writes a session only once it has *ended*, keyed by exact start time — until 2026-10-27 it
+    wrote sessions at first sight and never updated them, so `charge_event` carried ~40% of the
+    charger's energy. `--backfill --days N` rebuilds from raw.) The car is an Ioniq 5 (no app);
+    "Tesla Car Charger" is just SPAN's circuit label.
+  - `influx_tasks/*.flux` - the `circuit_5m` / `circuit_1h` rollup tasks. The counter branch
+    sums only *plausible* steps of SPAN's cumulative meter (previous reading non-zero, step ≤
+    10 kWh + 50 kW × elapsed): a panel restart on 2026-10-26 read 0 on every circuit for ~20 min
+    and came back at a lower baseline, and the 0→baseline step was summed as +2,921 kWh of HVAC.
+    SPAN's meter lands energy in ~15-min batches, so never bound a step by implied power alone.
+    Details + probe table: `pi/influx_tasks/README.md`; findings:
+    `docs/superpowers/notes/2026-10-27-ev-accuracy-findings.md`. After editing a `.flux`:
+    `./provision_influx_tasks.sh`, `docker compose build daily-report`, backfill with
+    `docker compose run --rm --no-deps …` (without `--no-deps` compose recreates `influxdb`).
   - `weather_poller.py` - Hourly outdoor temp/humidity/cloud-cover from Open-Meteo into a
     `weather` measurement (#14 Phase 1). Unblocks the heat/cool split and cold-weather
     aux-heat suppression (#3) — neither built yet.
@@ -138,6 +151,28 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 **Start at `docs/roadmap.md`** — phased, dependency-ordered, each phase scoped to hand to a
 subagent. The list below is near-term mechanics; the roadmap explains ordering and why.
 
+- **#26 — SPAN removes the v1 REST API on 2026-12-31. FIRST, ahead of `/trends`** (decided
+  2026-10-27). Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
+  `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
+  app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's
+  own MQTT broker (port 8883, username = serial, Homie topics per circuit). Still LAN-only. Plan
+  in the issue: spike (register, subscribe, confirm which topic equals the v1
+  `consumedEnergyWh` counter and the push cadence) → collector v2 writing the *same* `panel` /
+  `circuit` measurements → side-by-side run → cut over. Watch the 30s-cadence assumptions in
+  `pi/influx_tasks/*.flux` (`bucketPeriod = bucketEvery + 30s`) and `collector_health.py`.
+- **Trends view (`/trends`) — Part 1 (EV accuracy) SHIPPED 2026-10-27; Part 2 deferred behind
+  #26.** Spec `docs/superpowers/specs/2026-10-26-trends-view-design.md`, plan
+  `docs/superpowers/plans/2026-10-26-trends-view.md` (Tasks 3–9 remain). Part 1 outcome: the
+  "October EV split" and the 3,052 kWh anomaly email were one panel-restart counter rebase, fixed
+  in the rollup tasks; `charge_event` now covers ~99% of charger energy (was ~44%). Unmonitored
+  unaffected. Open: an external ground truth for the charger (no Tesla app; if the wall unit is a
+  Tesla Wall Connector Gen 3, its local `/api/1/lifetime` has a kWh counter), and a restart /
+  firmware-change signal from the panel so the anomaly email says "panel restarted" instead of
+  reporting usage (the v2 status endpoint has no uptime — fold into #26's spike).
+- **Pre-existing test failures:** 5 tests in `pi/test_weekly_report.py` fail on `main` because
+  that file's matplotlib stub lacks `subplots` / `ticker` (noticed 2026-10-27, not fixed). Run the
+  Pi suite with `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client
+  --with tzdata --with matplotlib pytest -q`; 215 pass, those 5 fail.
 - **#14 sub-project 2 — heat/cool/hot-water split — SHIPPED 2026-08-28.** Deployed to the Pi,
   `hvac_mode` backfilled to 2026-01-04 (67,608 intervals), merged to `main`, smoke-tested live.
   Spec/plan/findings under `docs/superpowers/` (the ≥95% bath-parity gate was waived at 83.3% —
@@ -197,8 +232,10 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
 
 ## SPAN API
 
-Base URL: `http://192.168.4.72/api/v1`
+Base URL: `http://192.168.4.72/api/v1` — **removed by SPAN on 2026-12-31** (every `/api/v1/*`
+path 404s after that; see #26 in Next Steps for the v2 + MQTT replacement).
 
+- `GET /status` - Unauthenticated: firmware version, `system.uptime`, serial. Not polled yet.
 - `POST /auth/register` - Register client (door-proximity: toggle 3x)
 - `GET /panel` - Grid power, branch data
 - `GET /circuits` - Named circuits with power/energy

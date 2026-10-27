@@ -11,6 +11,18 @@ the brief. Phases are ordered by dependency, not by appeal.
 
 ## Where things stand
 
+**Deadline that outranks every phase below (added 2026-10-27): #26.** SPAN removes the v1
+REST API on 2026-12-31; the collector, `span_client.py` and `hvac_probe.py` all speak v1.
+Migrate to v2 auth + the panel's local MQTT broker before then, writing the same `panel` /
+`circuit` measurements so nothing downstream changes. Plan and findings in the issue. The
+`/trends` page (Part 2 of `docs/superpowers/plans/2026-10-26-trends-view.md`) waits behind it.
+
+**Done and deployed (2026-10-27)**
+
+- EV accuracy (trends plan Part 1): the rollup counter branch rejects the 0→baseline step a
+  panel restart produces (`pi/influx_tasks/*.flux`), and `charge_detector.py` writes whole
+  sessions (99% of charger energy, was ~44%). `docs/superpowers/notes/2026-10-27-ev-accuracy-findings.md`.
+
 **Done and deployed (2026-07-31)**
 
 - Nightly encrypted backups to Cloudflare R2 (`pi/backup/`). ~216 MB/snapshot, systemd

@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status (2026-10-27):** Part 1 (Tasks 1–2) **done** — findings and the shipped fix in
+`docs/superpowers/notes/2026-10-27-ev-accuracy-findings.md` (the cause was a panel-restart
+counter rebase, not the integral; Unmonitored unchanged; the Car layer stays the circuit
+counter). Part 2 (Tasks 3–9) is **deferred behind #26** (SPAN v1 API removal 2026-12-31),
+decided with Nico. Resume at Task 3 when #26 is done; nothing in Tasks 3–9 changes.
+
 **Goal:** Fix the EV charging totals the weekly email's 12-month trend relies on, then ship `/trends`: monthly/weekly/yearly stacked bars of energy by purpose with a ranked "Where it went" panel.
 
 **Architecture:** Part 1 is a diagnosis-first debugging task on the Pi's energy sources, then a fix wherever the evidence points. Part 2 adds pure, tested period/URL/layer logic in `web/lib/`, a server route that fans out one cached energy query per period (reusing `cachedQueryEnergyByCategory`, plus small `hvac_mode` and `bath_event` sums), and a client page with a hand-rolled SVG stacked bar chart and the ranked panel.
