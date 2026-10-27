@@ -152,7 +152,10 @@ services:
     # Pinned 2026-08-22 (#16) to the version running on the Pi at pin time
     # (`docker exec cloudflared cloudflared --version` -> 2026.3.0), so
     # upstream :latest churn can't surprise-upgrade it. Bump deliberately.
-    image: cloudflare/cloudflared:2026.3.0
+    # Bumped 2026-10-26 2026.3.0 -> 2026.10.3: Cloudflare security notice,
+    # versions before 2026.10.2 still trust eight weak-key eMudhra (emSign)
+    # intermediate certs. Restarting doesn't apply a bump; pull the new image.
+    image: cloudflare/cloudflared:2026.10.3
     container_name: cloudflared
     restart: unless-stopped
     # Token goes in as a file (built from CLOUDFLARE_TUNNEL_TOKEN in .env, see
