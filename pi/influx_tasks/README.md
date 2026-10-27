@@ -433,16 +433,25 @@ docker exec influxdb influx task log list --org home --task-id <id>
 defaulting to 2026-01-04 (start of data) → now. Aggregation runs server-side via
 Flux `to()`; no sample data crosses the wire.
 
+Always `--no-deps`: without it `docker compose run` also reconciles the
+service's dependencies, and if the compose config has drifted from the running
+`influxdb` container since it was started, compose **recreates InfluxDB**
+(2026-10-27: a two-second restart mid-backfill, "Connection refused" on every
+chunk). The backfill image copies `influx_tasks/` in, so rebuild it first after
+editing a `.flux` file.
+
 ```
+# after editing a .flux file
+docker compose build daily-report
+
 # see what would be written, write nothing
-docker compose run --rm daily-report python backfill_rollups.py --dry-run
+docker compose run --rm --no-deps daily-report python backfill_rollups.py --dry-run
 
 # rebuild everything from the start of data
-docker compose run --rm daily-report python backfill_rollups.py
+docker compose run --rm --no-deps daily-report python backfill_rollups.py
 
 # repair one range after an outage
-docker compose run --rm daily-report python backfill_rollups.py \
-    --measurement circuit_5m --from 2026-07-30 --to 2026-07-31
+docker compose run --rm --no-deps daily-report python backfill_rollups.py --measurement circuit_5m --from 2026-07-30 --to 2026-07-31
 ```
 
 Chunked so the Pi does not OOM: `circuit_5m` 1 day at a time, `circuit_1h` 7

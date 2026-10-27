@@ -32,8 +32,12 @@ fi
 # flags at the first positional argument (the '-' stdin marker), so these cannot
 # be appended at the end.
 AUTH=(--org "$ORG")
+# `influx task update` has no --org flag (the task ID is global); passing one
+# fails with "flag provided but not defined: -org" (hit 2026-10-27).
+UPDATE_AUTH=()
 if [[ -n "${INFLUXDB_TOKEN:-}" ]]; then
   AUTH+=(--token "$INFLUXDB_TOKEN")
+  UPDATE_AUTH+=(--token "$INFLUXDB_TOKEN")
 fi
 
 if ! docker exec "$CONTAINER" true 2>/dev/null; then
@@ -79,7 +83,7 @@ for f in "${files[@]}"; do
   fi
 
   if [[ -n "$id" ]]; then
-    docker exec -i "$CONTAINER" influx task update "${AUTH[@]}" \
+    docker exec -i "$CONTAINER" influx task update "${UPDATE_AUTH[@]}" \
       --id "$id" --status active - <"$f" >/dev/null
     echo "updated $declared (id $id)"
   else
