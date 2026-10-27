@@ -220,11 +220,57 @@ backward correction — or a genuine wrap, should SPAN ever do one — drops a
 single step, bounding the error at one sample interval of energy rather than
 injecting a whole counter reading.
 
-The filter is `>= 0.0`, not `> 0.0`, and that matters: SPAN's meter is coarse
-and only advances every ~3 min, so most 30s deltas are exactly `0`. Keeping the
-zeros is what makes a flat bucket emit a real `0` instead of vanishing.
-Verified on 1-minute buckets over a flat stretch: `0, 0, 14.71, 0, 0` — rows
-present throughout, no bucket dropped.
+The filter keeps zero deltas, and that matters: SPAN's meter is coarse — it
+lands energy in batches, up to ~15 min apart on busy circuits — so most 30s
+deltas are exactly `0`. Keeping the zeros is what makes a flat bucket emit a
+real `0` instead of vanishing. Verified on 1-minute buckets over a flat
+stretch: `0, 0, 14.71, 0, 0` — rows present throughout, no bucket dropped.
+
+## Panel restarts that rebase the counter
+
+Dropping negative steps was not enough. On 2026-10-26 17:00Z the panel
+restarted (API down 17:00:36–17:04:42Z, firmware `spanos3/r202639/04`), every
+circuit's `consumed_energy_wh` read **0** for ~20 min, and then came back at a
+different, **lower** baseline (HP Control 3,114,501 → 0 → 2,921,700 Wh; the
+charger 517,779 → 0 → 73,820). The step down was dropped, but the step from 0
+up to the new baseline is positive and was summed: +2,921.8 kWh of "HVAC" in
+one hour, which the anomaly email duly reported. Other owners see the same
+after firmware updates (SpanPanel/span issues #87, #240). Full write-up:
+`docs/superpowers/notes/2026-10-27-ev-accuracy-findings.md`.
+
+Since 2026-10-27 a positive step is summed only if it is plausible:
+
+- the previous reading is non-zero — a `0` is an uninitialised meter, so the
+  step out of it is a baseline, not energy;
+- the step is at most `maxStepBaseWh + maxStepRateW × elapsed`
+  (10 kWh + 50 kW × hours between the two samples).
+
+The base term exists because the meter batches: the largest single 30s step
+in five months of history is ~3 kWh (the charger at 11.6 kW, one ~15 min
+batch), so a bound on *implied power* alone would throw away every batch (a
+3 kWh batch in a 30s sample looks like 355 kW). The rate term keeps the
+counter's one real advantage over the integral: across a collector gap it still
+carries the energy (27.5 kWh over a 24.8 h gap on 2026-05-10 passes).
+
+Probe of the two rules against the old construction, 1h buckets, Wh:
+
+| bucket | circuit | old | new | integral |
+|---|---|---|---|---|
+| 2026-10-26 18:00Z (restart) | HP / Control | 2,921,769 | 69 | 130 |
+| 2026-10-26 18:00Z (restart) | Tesla Car Charger | 73,820 | 0.5 | 0.2 |
+| 2026-10-26 18:00Z (restart) | Heat pump (HP) | 74,200 | 952 | 1,789 |
+| 2026-10-02 06:00Z (batch straddles the hour) | Tesla Car Charger | 4,398 | 4,398 | 1,631 |
+| 2026-10-06 23:00Z (normal charging) | Tesla Car Charger | 7,952 | 7,952 | 10,199 |
+| 2026-05-10 19:00Z (24.8 h collector gap) | Heat pump (HP) | 570 | 570 | 409 |
+
+Every non-restart hour is unchanged. In the restart hour the counter now
+under-reads a little (HP 952 vs 1,789): the batch accumulated before the
+restart was lost in the rebase itself and nothing can recover it. That is a
+few hundred Wh house-wide, once.
+
+After editing the rule: re-provision the tasks and backfill the affected range
+(see below). The rollups are the only consumer of the raw counter, so nothing
+else needs touching.
 
 ## Accuracy vs. raw `integral()`
 

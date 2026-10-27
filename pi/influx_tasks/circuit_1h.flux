@@ -60,16 +60,21 @@ energy =
         |> set(key: "_field", value: "energy_wh")
 
 // SPAN's own cumulative meter. See circuit_5m.flux for why this is a sum of
-// non-negative per-sample deltas and emphatically NOT increase().
+// plausible non-negative per-sample deltas and emphatically NOT increase(),
+// and for what the step bounds guard against (2026-10-26 panel restart).
+maxStepBaseWh = 10000.0
+maxStepRateW = 50000.0
+nsPerHour = 3600000000000.0
 counter =
     from(bucket: srcBucket)
         |> range(start: readFrom, stop: readTo)
         |> filter(fn: (r) => r._measurement == srcMeasurement and r._field == "consumed_energy_wh")
         |> filter(fn: (r) => exists r._value)
         |> window(every: bucketEvery, period: bucketPeriod)
-        |> difference(nonNegative: false, keepFirst: false)
-        |> filter(fn: (r) => r._value >= 0.0)
-        |> sum()
+        |> map(fn: (r) => ({r with cur: r._value, ts: int(v: r._time)}))
+        |> difference(nonNegative: false, keepFirst: false, columns: ["_value", "ts"])
+        |> filter(fn: (r) => r._value == 0.0 or (r._value > 0.0 and r.cur - r._value > 0.0 and r._value <= maxStepBaseWh + maxStepRateW * float(v: r.ts) / nsPerHour))
+        |> sum(column: "_value")
         |> map(fn: (r) => ({r with _time: date.add(d: bucketEvery, to: r._start)}))
         |> filter(fn: (r) => r._time > emitFrom and r._time <= emitTo)
         |> window(every: inf)

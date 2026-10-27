@@ -120,9 +120,29 @@ energy =
 // a backward correction (or a genuine wrap) drops a single step, bounding the
 // error at one sample interval of energy instead of a whole counter reading.
 //
-// The >= 0.0 (not > 0.0) filter matters: SPAN's counter is coarse and only
-// advances every ~3 min, so most 30s deltas are exactly 0. Keeping them is what
-// makes a flat bucket emit a real 0 rather than vanishing.
+// The >= 0.0 (not > 0.0) filter matters: SPAN's counter is coarse — it lands
+// energy in batches, up to ~15 min apart on busy circuits — so most 30s deltas
+// are exactly 0. Keeping them is what makes a flat bucket emit a real 0 rather
+// than vanishing.
+//
+// Dropping negatives is not enough (2026-10-26 17:00Z, a panel restart): every
+// circuit read 0 for ~20 min, then came back at a different, LOWER baseline.
+// The step down to 0 was dropped, but the step from 0 up to the new baseline
+// (+73,820 Wh on the charger, +2,921,700 Wh on HP Control) was summed as
+// energy. So a positive step also has to be plausible:
+//   - the previous reading must be non-zero (a 0 is an uninitialised meter);
+//   - the step must fit maxStepBaseWh + maxStepRateW x elapsed. The base term
+//     covers one batched update (largest seen in 5 months: ~3 kWh, the charger
+//     at 11.6 kW x ~15 min); the rate term keeps the counter's advantage over
+//     the integral across a collector gap (27.5 kWh over a 24.8 h gap on
+//     2026-05-10 must survive). A bound on implied power alone does NOT work:
+//     a 3 kWh batch in a 30 s sample looks like 355 kW.
+// README "Panel restarts that rebase the counter" has the probe numbers.
+// These constants live in the body, not the header, because
+// backfill_rollups.py replaces the header with its own.
+maxStepBaseWh = 10000.0
+maxStepRateW = 50000.0
+nsPerHour = 3600000000000.0
 //
 // Same overlapping window as the energy branch, for the same reason: the diffs
 // must span sample(t) -> sample(t + bucketEvery) so consecutive buckets tile
@@ -134,9 +154,12 @@ counter =
         |> filter(fn: (r) => exists r._value)
         // No abs() here — this is a cumulative meter, not a signed power reading.
         |> window(every: bucketEvery, period: bucketPeriod)
-        |> difference(nonNegative: false, keepFirst: false)
-        |> filter(fn: (r) => r._value >= 0.0)
-        |> sum()
+        // Carry the current reading and the sample time alongside the delta,
+        // so the filter can see the previous reading (cur - delta) and elapsed.
+        |> map(fn: (r) => ({r with cur: r._value, ts: int(v: r._time)}))
+        |> difference(nonNegative: false, keepFirst: false, columns: ["_value", "ts"])
+        |> filter(fn: (r) => r._value == 0.0 or (r._value > 0.0 and r.cur - r._value > 0.0 and r._value <= maxStepBaseWh + maxStepRateW * float(v: r.ts) / nsPerHour))
+        |> sum(column: "_value")
         // sum() drops _time, so derive the end-of-bucket stamp from _start.
         |> map(fn: (r) => ({r with _time: date.add(d: bucketEvery, to: r._start)}))
         |> filter(fn: (r) => r._time > emitFrom and r._time <= emitTo)
