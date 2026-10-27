@@ -83,8 +83,10 @@ for f in "${files[@]}"; do
   fi
 
   if [[ -n "$id" ]]; then
+    # `-` (stdin) is rejected by `task update` ("unknown command '-'"); --file
+    # on the exec'd stdin works.
     docker exec -i "$CONTAINER" influx task update "${UPDATE_AUTH[@]}" \
-      --id "$id" --status active - <"$f" >/dev/null
+      --id "$id" --status active --file /dev/stdin <"$f" >/dev/null
     echo "updated $declared (id $id)"
   else
     docker exec -i "$CONTAINER" influx task create "${AUTH[@]}" - <"$f" >/dev/null
