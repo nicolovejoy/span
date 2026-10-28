@@ -24,7 +24,8 @@
 - **Never write 0 for a property not yet received.** Omit the field. A circuit with no fields gets no point.
 - Snapshot cadence `POLL_INTERVAL=30` s (the rollup `.flux` tasks and `collector_health.py` assume 30 s).
 - `MEASUREMENT_SUFFIX` env var (default `""`) is appended to `panel`, `circuit`, `collector_poll`, `panel_lifecycle`. Shadow mode uses `_v2`.
-- Secrets reach the container only through `env_file: .env` (as the v1 collector does today), never in a compose `environment:` line. Env names: `SPAN_SERIAL`, `SPAN_V2_BROKER_PASSWORD`. `SPAN_V2_BROKER_HOST` defaults to `span-<serial>.local`.
+- **1Password is the source of truth for all of `pi/.env`.** The Pi's `.env` is generated from `pi/.env.tpl` by `pi/render_env.sh` (Task 0) and is never hand-edited again. Template syntax is the same as `pi/backup/span-backup.env.tpl`: `KEY={{ op://dev-secrets/<item>/<field> }}`.
+- `collector-v2` gets its secrets as compose file secrets (`/run/secrets/…`, the cloudflared pattern), with **no `env_file`**, so they don't appear in `docker inspect`. Env names: `SPAN_SERIAL`, `SPAN_V2_BROKER_PASSWORD`, `INFLUXDB_TOKEN`. Each is read from `$NAME_FILE` when set, else `$NAME`. `SPAN_V2_BROKER_HOST` defaults to `span-<serial>.local`.
 - The repo is public. Use the fake serial `ab-0000-00000` in tests. Never commit the real serial, captures or credentials.
 - Pi test run: `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client --with tzdata --with matplotlib --with paho-mqtt pytest -q`. The 5 known `test_weekly_report.py` failures are pre-existing. No new failures allowed.
 
@@ -37,6 +38,33 @@
 5. **Circuit renamed in the SPAN app.** The new `info/name` becomes the `name` tag on the next snapshot, the same behaviour as v1. Pinned in Task 1 (`test_rename_uses_latest_name`).
 
 ---
+
+### Task 0: `pi/.env` rendered from 1Password
+
+**Files:**
+- Create: `pi/.env.tpl`, `pi/render_env.sh`, `pi/tools/seed_phrpi_span_env.sh`
+- Modify: `pi/.env.example` (delete it; the template replaces it, so point `pi/SETUP.md` and any other references at `.env.tpl`)
+
+**1Password references** (vault `dev-secrets`):
+- `CLOUDFLARE_TUNNEL_TOKEN` → `phrpi-cloudflared-tunnel-token/credential`
+- `RESEND_API_KEY` → `SPAN-resend-API-key/credential` (the value check in Step 4 confirms it's the key the Pi actually uses)
+- `SPAN_SERIAL` → `span-panel-v2-client/serial`; `SPAN_V2_BROKER_PASSWORD` → `span-panel-v2-client/ebusBrokerPassword`
+- `INFLUXDB_TOKEN`, `INFLUXDB_PASSWORD`, `GRAFANA_PASSWORD`, `SPAN_ACCESS_TOKEN` (v1, removed at cutover), `REPORT_EMAIL` → new item `phrpi-span-env`, one field per name
+- Non-secrets (`HVAC_COOL_ALERT`, any other flags) are plain `KEY=value` lines in the template.
+
+**Scripts** (bash, run on the laptop by Nico, since `op` needs his unlock; no bare backslashes in anything he pastes):
+- `pi/tools/seed_phrpi_span_env.sh`: one-time setup. Over ssh, reads the five keys above from `~/SPAN/pi/.env` on the Pi verbatim, everything after the first `=`, and runs `op item create --vault dev-secrets --category "API Credential" --title phrpi-span-env` with one `[password]` field per key (`REPORT_EMAIL` as `[text]`). It refuses to run if the item already exists and prints nothing but the created item's field names.
+- `pi/render_env.sh [--host nico@phrpi.local]`:
+  1. `op inject -i pi/.env.tpl` piped over ssh into `~/SPAN/pi/.env.new` with `umask 077`.
+  2. On the Pi, prints **names only**: keys only in `.env` (would be dropped), keys only in `.env.new` (added), and `same`/`DIFFERS` per shared key, comparing whole lines exactly.
+  3. Prompts `Swap in .env.new? [y/N]`. On yes: `cp .env .env.bak && mv .env.new .env`; on no: deletes `.env.new`. Restarts nothing; it prints the compose command to run next instead.
+
+- [ ] **Step 1: Write `pi/.env.tpl`** with every key in `pi/.env.example`, plus `HVAC_COOL_ALERT=1`, `SPAN_SERIAL` and `SPAN_V2_BROKER_PASSWORD`, using the references above.
+- [ ] **Step 2: Write both scripts.** Check: `bash -n pi/render_env.sh pi/tools/seed_phrpi_span_env.sh` prints nothing.
+- [ ] **Step 3: Nico runs `pi/tools/seed_phrpi_span_env.sh`.** Expected: the 5 field names of the new `phrpi-span-env` item.
+- [ ] **Step 4: Nico runs `pi/render_env.sh` and answers N the first time.** Pass: no dropped keys, the only added keys are `SPAN_SERIAL` and `SPAN_V2_BROKER_PASSWORD`, and every shared key is `same`. A dropped key means it's missing from the template: add it (to `phrpi-span-env` if secret) and re-run. A `DIFFERS` means the wrong 1Password item, or quoting: fix and re-run. Don't proceed until it's clean.
+- [ ] **Step 5: Nico re-runs it and answers y.** No restart is needed: every existing value is identical, and nothing reads the two new keys yet.
+- [ ] **Step 6: Commit:** `git add pi/.env.tpl pi/render_env.sh pi/tools/seed_phrpi_span_env.sh pi/SETUP.md && git rm pi/.env.example && git commit -m "pi: render .env from 1Password via .env.tpl"`.
 
 ### Task 1: Pure panel state + snapshot rows
 
@@ -113,7 +141,8 @@ Rules: if not connected → `("both_fail", "disconnected")`. If `last_update` is
   - CLI: `python collector_v2.py [--dry-run]`. `--dry-run` prints line protocol to stdout instead of writing to Influx, so it can run from the laptop.
 
 Process shape:
-- Read env: `SPAN_SERIAL`, `SPAN_V2_BROKER_PASSWORD`, `SPAN_V2_BROKER_HOST` (default `span-<serial>.local`), `SPAN_PANEL_IP` (default `192.168.4.72`), `POLL_INTERVAL` (30), `MEASUREMENT_SUFFIX` (""), plus the existing `INFLUXDB_*`. Exit with a logged error if the serial or password is missing (not needed with `--dry-run` for Influx vars).
+- `env_secret(name: str) -> str | None`: returns the stripped contents of the file named by `$NAME_FILE` if that variable is set, else `$NAME`. Test: `test_env_secret_prefers_file` (with both set, the file wins; with only `$NAME`, its value is returned; with neither, `None`).
+- Read env (secrets via `env_secret`): `SPAN_SERIAL`, `SPAN_V2_BROKER_PASSWORD`, `INFLUXDB_TOKEN`, `SPAN_V2_BROKER_HOST` (default `span-<serial>.local`), `SPAN_PANEL_IP` (default `192.168.4.72`), `POLL_INTERVAL` (30), `MEASUREMENT_SUFFIX` (""), plus the existing `INFLUXDB_*`. Exit with a logged error if the serial or password is missing (not needed with `--dry-run` for Influx vars).
 - At startup, fetch the CA PEM from `http://$SPAN_PANEL_IP/api/v2/certificate/ca` into a temp file (exit if no `BEGIN CERTIFICATE`), then `tls_set(ca_certs=...)` with hostname checking **on**.
 - paho client (`CallbackAPIVersion.VERSION2`): `client_id=f"span-collector-v2{suffix}"`, username = serial. `on_connect` subscribes `ebus/5/#` and sets `connected=True`; `on_disconnect` sets it False. Call `reconnect_delay_set(1, 60)`, then `connect_async` + `loop_start` so paho reconnects on its own. **No LWT** (the broker discards LWTs on SPAN topics).
 - `on_message` calls `state.apply(...)` under a `threading.Lock`. A returned lifecycle event is written immediately (best-effort; log failures).
@@ -130,14 +159,15 @@ Process shape:
 
 **Files:**
 - Modify: `pi/Dockerfile`: add `paho-mqtt` to the `pip install` line; `COPY span_v2.py .` and `COPY collector_v2.py .` (per memory: a new `pi/*.py` needs a COPY line).
-- Modify: `pi/docker-compose.yml`: new service `collector-v2` next to `collector`. Same `build: .`, `restart: unless-stopped`, `env_file: .env`, the same `INFLUXDB_*` environment lines; `SPAN_PANEL_IP=192.168.4.72`, `POLL_INTERVAL=30`, `MEASUREMENT_SUFFIX=_v2`; `command: ["python", "-u", "collector_v2.py"]`; `extra_hosts: ["span-${SPAN_SERIAL}.local:192.168.4.72"]` (a container can't resolve mDNS, and this keeps TLS hostname verification on); `depends_on: [influxdb]`.
-- Modify: `pi/.env.example`: add `SPAN_SERIAL=` and `SPAN_V2_BROKER_PASSWORD=` with a comment pointing at 1Password `dev-secrets` → `span-panel-v2-client`.
+- Modify: `pi/docker-compose.yml`:
+  - Under the top-level `secrets:`, next to `tunnel_token`, add `span_serial: {environment: SPAN_SERIAL}`, `span_v2_broker_password: {environment: SPAN_V2_BROKER_PASSWORD}` and `influxdb_token: {environment: INFLUXDB_TOKEN}`.
+  - New service `collector-v2` next to `collector`: `build: .`, `restart: unless-stopped`, **no `env_file`**, and `secrets: [span_serial, span_v2_broker_password, influxdb_token]`.
+  - `environment:` `INFLUXDB_URL=http://influxdb:8086`, `INFLUXDB_ORG=home`, `INFLUXDB_BUCKET=span`, `SPAN_PANEL_IP=192.168.4.72`, `POLL_INTERVAL=30`, `MEASUREMENT_SUFFIX=_v2`, plus `SPAN_SERIAL_FILE` / `SPAN_V2_BROKER_PASSWORD_FILE` / `INFLUXDB_TOKEN_FILE` pointing at `/run/secrets/<name>`.
+  - `command: ["python", "-u", "collector_v2.py"]`; `extra_hosts: ["span-${SPAN_SERIAL}.local:192.168.4.72"]` (a container can't resolve mDNS, and this keeps TLS hostname verification on; the serial in `docker inspect` is fine, since it's only private to keep it out of the public repo); `depends_on: [influxdb]`.
 
 - [ ] **Step 1: Make the edits; check config locally.** Run: `cd pi && docker compose config --services`. Expected: the list includes `collector-v2`. (If docker isn't available on the laptop, do this check on the Pi in Step 3.)
 - [ ] **Step 2: Commit and push the branch.** `git commit -m "pi: collector-v2 shadow service (#26)" && git push -u origin v2-collector`.
-- [ ] **Step 3: Nico adds the secrets to the Pi's `pi/.env`.** He runs this from the laptop; values never enter the session:
-  `printf 'SPAN_SERIAL=%s\nSPAN_V2_BROKER_PASSWORD=%s\n' "$(op read 'op://dev-secrets/span-panel-v2-client/serial')" "$(op read 'op://dev-secrets/span-panel-v2-client/ebusBrokerPassword')" | ssh nico@phrpi.local 'cat >> ~/SPAN/pi/.env'`
-  Verify without revealing: `ssh nico@phrpi.local 'grep -c "^SPAN_V2_BROKER_PASSWORD=." ~/SPAN/pi/.env'` → `1`.
+- [ ] **Step 3: Secrets are already on the Pi** from Task 0. Verify without revealing: `ssh nico@phrpi.local 'grep -c "^SPAN_V2_BROKER_PASSWORD=." ~/SPAN/pi/.env'` → `1`. Then confirm no secret shows in inspect after Step 4: `docker inspect <collector-v2 container> | grep -c -i -E "BROKER_PASSWORD=|INFLUXDB_TOKEN="` → `0` (only the `_FILE` paths may appear).
 - [ ] **Step 4: Deploy.** On the Pi: `cd ~/SPAN && git fetch && git checkout v2-collector && cd pi && docker compose build collector-v2 && docker compose up -d --no-deps collector-v2`. `--no-deps` avoids recreating `influxdb`, the same lesson as the backfill recipe. **Don't rebuild or recreate `collector`.**
 - [ ] **Step 5: Verify.** `docker logs --tail 20 span-pi-collector-v2-1` (or whatever compose names it; check with `docker compose ps`) shows connected with no TLS errors. A Flux query for the last 5 min shows ~10 `panel_v2` points, 21 distinct `circuit_id` in `circuit_v2`, and `collector_poll_v2` all `result=ok`. Then switch the Pi checkout back to `main` once this branch merges (memory: the Pi checkout can sit on a stale branch).
 
@@ -152,9 +182,9 @@ Process shape:
   - mean power agrees within max(2%, 5 W);
   - `collector_poll_v2` has `result=ok` coverage ≥ v1's for the same day.
 - [ ] **Step 2: After ≥3 full days of shadow data,** run it and report results to Nico. **Stop here for his go-ahead** before cutting over.
-- [ ] **Step 3: Cutover** (with Nico's OK, and before 2026-12-31). `collector` service: set `command: ["python", "-u", "collector_v2.py"]`, add the `extra_hosts` line, `MEASUREMENT_SUFFIX=""`, then delete the `collector-v2` service. Dockerfile `CMD` → `collector_v2.py`. `docker compose up -d --no-deps --build collector`, then `docker compose rm -sf collector-v2`. Verify that `/api/health` (https://span.pianohouseproject.org/api/health) stays 200 and `./status.sh` is green.
+- [ ] **Step 3: Cutover** (with Nico's OK, and before 2026-12-31). `collector` service: take over `collector-v2`'s definition (command, secrets, `_FILE` env, `extra_hosts`, no `env_file`) with `MEASUREMENT_SUFFIX=""`, then delete the `collector-v2` service. Remove `SPAN_ACCESS_TOKEN` from `pi/.env.tpl` and its field from `phrpi-span-env`, and have Nico re-run `pi/render_env.sh` (expected: one dropped key, `SPAN_ACCESS_TOKEN`). Update the rotation wording in the `phrpi-cloudflared-tunnel-token` item's notes ("update this item, then run `pi/render_env.sh`"); that's Nico's edit. Dockerfile `CMD` → `collector_v2.py`. `docker compose up -d --no-deps --build collector`, then `docker compose rm -sf collector-v2`. Verify that `/api/health` (https://span.pianohouseproject.org/api/health) stays 200 and `./status.sh` is green.
 - [ ] **Step 4: Port `status.sh`**: change the panel probe from `/api/v1/status` to `/api/v2/status`.
-- [ ] **Step 5: Docs.** In `CLAUDE.md`, update the `collector.py` architecture entry to say it's retired in favour of `collector_v2.py`, and update the `SPAN API` section and #26 in Next Steps. Update the `collector_poll` table in `pi/influx_tasks/README.md` (`panel_age_ms` replaces `panel_ms`/`circuits_ms`; new `error` values). Leave the `*_v2` shadow measurements in place; they're harmless, and Nico can drop them later.
+- [ ] **Step 5: Docs.** In `CLAUDE.md`, replace "All secrets are in `pi/.env`" and the cloudflared rotation steps with the `pi/.env.tpl` → `render_env.sh` flow. Update the `collector.py` architecture entry to say it's retired in favour of `collector_v2.py`, and update the `SPAN API` section and #26 in Next Steps. Update the `collector_poll` table in `pi/influx_tasks/README.md` (`panel_age_ms` replaces `panel_ms`/`circuits_ms`; new `error` values). Leave the `*_v2` shadow measurements in place; they're harmless, and Nico can drop them later.
 - [ ] **Step 6: Commit, PR, merge** per the usual flow.
 
 ## Out of scope (follow-ups to file on #26)
