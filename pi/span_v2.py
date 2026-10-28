@@ -88,6 +88,12 @@ class PanelState:
                 return {"state": current[0], "firmware": current[1]}
         return None
 
+    def reset_lifecycle(self) -> None:
+        """Forget the last lifecycle seen, so the retained replay after a reconnect emits
+        again. The broker runs on the panel, so a panel restart drops our connection and
+        the replay repeats `ready`; without a reset that restart would leave no trace."""
+        self._lifecycle = (None, None)
+
     def rows(self) -> list[dict]:
         rows = []
         panel = {}
@@ -115,7 +121,8 @@ class PanelState:
         return rows
 
 
-def poll_result(state: PanelState, now: float, connected: bool, stale_after_s: float = 90.0) -> tuple[str, str]:
+def poll_result(state: PanelState, now: float, connected: bool, stale_after_s: float = 90.0,
+                connect_error: str | None = None) -> tuple[str, str]:
     """(result, error) for one snapshot, in collector_poll's vocabulary.
 
     Only the panel is judged by age: lugs-up power changes every ~1 s, and 90 s
@@ -123,7 +130,7 @@ def poll_result(state: PanelState, now: float, connected: bool, stale_after_s: f
     republishes, so circuits are judged only by presence.
     """
     if not connected:
-        return "both_fail", "disconnected"
+        return "both_fail", connect_error or "disconnected"
     if state.last_update is None or now - state.last_update > stale_after_s:
         return "both_fail", "stale"
     if not any(r["measurement"] == "circuit" for r in state.rows()):
@@ -135,3 +142,9 @@ def snapshot_rows(state: PanelState, now: float, connected: bool, stale_after_s:
     """Rows to write for this snapshot: none while disconnected or stale."""
     result, _ = poll_result(state, now, connected, stale_after_s)
     return state.rows() if result in ("ok", "circuits_fail") else []
+
+
+def stalled(last_ok: float, now: float, limit_s: float = 600.0) -> bool:
+    """True once no snapshot has been `ok` for limit_s. The collector then exits so the
+    container restarts and re-fetches the panel CA (paho alone retries forever)."""
+    return now - last_ok > limit_s

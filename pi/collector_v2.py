@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 import httpx
 from influxdb_client import Point
 
-from span_v2 import PanelState, poll_result, snapshot_rows
+from span_v2 import PanelState, poll_result, snapshot_rows, stalled
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +44,8 @@ def env_secret(name: str) -> str | None:
 SPAN_PANEL_IP = os.getenv("SPAN_PANEL_IP", "192.168.4.72")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
 MEASUREMENT_SUFFIX = os.getenv("MEASUREMENT_SUFFIX", "")
+# Exit (and let the container restart) after this long with no ok snapshot.
+STALL_EXIT_S = int(os.getenv("STALL_EXIT_S", "600"))
 
 INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://localhost:8086")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "home")
@@ -129,17 +131,23 @@ def main() -> None:
     lock = threading.Lock()
     connected = threading.Event()
     lifecycle_events: list[tuple[datetime, dict]] = []
+    connect_error: list[str | None] = [None]
 
     def on_connect(client, userdata, flags, reason_code, properties):
         if reason_code.is_failure:
+            # 134/135: bad credentials / not authorized (paho maps MQTT 3.1.1 rc 4/5 here).
+            connect_error[0] = "auth_refused" if reason_code.value in (134, 135) else "connect_refused"
             logger.error(f"MQTT connect refused: {reason_code}")
             return
+        connect_error[0] = None
         logger.info(f"MQTT connected to {broker_host}")
         connected.set()
         client.subscribe("ebus/5/#", qos=0)
 
     def on_disconnect(client, userdata, flags, reason_code, properties):
         connected.clear()
+        with lock:
+            state.reset_lifecycle()
         logger.warning(f"MQTT disconnected: {reason_code}")
 
     def on_message(client, userdata, msg):
@@ -150,6 +158,7 @@ def main() -> None:
                 lifecycle_events.append((datetime.now(timezone.utc), event))
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"span-collector-v2{MEASUREMENT_SUFFIX}")
+    client.enable_logger(logger)  # surfaces paho's own connect/TLS failures
     client.username_pw_set(serial, password)
     client.tls_set(ca_certs=fetch_ca_cert(SPAN_PANEL_IP))
     client.on_connect = on_connect
@@ -163,6 +172,7 @@ def main() -> None:
     logger.info(f"Starting collector v2: broker={broker_host}, suffix={MEASUREMENT_SUFFIX!r}, "
                 f"interval={POLL_INTERVAL}s, dry_run={args.dry_run}")
 
+    last_ok = time.time()
     while True:
         time.sleep(POLL_INTERVAL)
         try:
@@ -171,7 +181,7 @@ def main() -> None:
             with lock:
                 is_connected = connected.is_set()
                 rows = snapshot_rows(state, now, is_connected)
-                result, error = poll_result(state, now, is_connected)
+                result, error = poll_result(state, now, is_connected, connect_error=connect_error[0])
                 age = None if state.last_update is None else now - state.last_update
                 events, lifecycle_events[:] = list(lifecycle_events), []
 
@@ -197,6 +207,14 @@ def main() -> None:
                 write(poll_point(result, error, len(points), age, MEASUREMENT_SUFFIX, ts))
             except Exception as e:
                 logger.error(f"Failed to write collector_poll point: {e}")
+
+            if result == "ok":
+                last_ok = now
+            elif stalled(last_ok, now, STALL_EXIT_S):
+                logger.error(f"No ok snapshot for {STALL_EXIT_S}s ({result}/{error}); exiting so the "
+                             "container restarts and re-fetches the panel CA")
+                client.loop_stop()
+                sys.exit(1)
         except Exception as e:
             logger.error(f"Collection error: {e}")
 

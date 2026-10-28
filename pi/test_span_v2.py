@@ -171,6 +171,18 @@ class PollResultTest(unittest.TestCase):
         rows = span_v2.snapshot_rows(state, 101.0, connected=True)
         self.assertEqual([r["measurement"] for r in rows], ["panel"])
 
+    def test_connect_error_tag(self):
+        # A refused connect (e.g. revoked broker password) is tagged, not a generic disconnect.
+        state = full_state(now=100.0)
+        self.assertEqual(
+            span_v2.poll_result(state, 101.0, connected=False, connect_error="auth_refused"),
+            ("both_fail", "auth_refused"),
+        )
+
+    def test_stalled(self):
+        self.assertFalse(span_v2.stalled(last_ok=0.0, now=600.0, limit_s=600.0))
+        self.assertTrue(span_v2.stalled(last_ok=0.0, now=600.1, limit_s=600.0))
+
     def test_ok(self):
         state = full_state(now=100.0)
         self.assertEqual(span_v2.poll_result(state, 101.0, connected=True), ("ok", "none"))
@@ -189,6 +201,14 @@ class LifecycleTest(unittest.TestCase):
         )
         self.assertIsNone(state.apply(t(SERIAL, "info/firmware-version"), "spanos3/r202639/04", 3.0))
         self.assertEqual(state.apply(t(SERIAL, "$state"), "init", 4.0)["state"], "init")
+
+    def test_reset_lifecycle_reemits_on_replay(self):
+        # The broker lives on the panel: a panel restart drops our connection and the
+        # retained replay repeats `ready`. After a reset, that replay must still emit.
+        state = PanelState(SERIAL)
+        state.apply(t(SERIAL, "$state"), "ready", 0.0)
+        state.reset_lifecycle()
+        self.assertEqual(state.apply(t(SERIAL, "$state"), "ready", 1.0), {"state": "ready", "firmware": None})
 
     def test_child_state_is_not_lifecycle(self):
         state = PanelState(SERIAL)
