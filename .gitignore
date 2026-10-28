@@ -1,4 +1,7 @@
 .env
+# pi/render_env.sh writes these next to .env on the Pi; both hold secrets
+.env.new
+.env.bak
 __pycache__/
 *.pyc
 .venv/

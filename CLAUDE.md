@@ -242,7 +242,12 @@ path 404s after that; see #26 in Next Steps for the v2 + MQTT replacement).
 
 ## Credentials
 
-All secrets are in `pi/.env` (git-ignored). See `pi/.env.example` for the required variables.
+The Pi's `pi/.env` (git-ignored) is generated, never hand-edited: `pi/.env.tpl` lists every key, with
+secrets as 1Password references (vault `dev-secrets`; items `phrpi-span-env`, `span-panel-v2-client`,
+`phrpi-cloudflared-tunnel-token`, `SPAN-resend-API-key`). To change a value, update 1Password (or a
+plain line in the template), then run `pi/render_env.sh` from the laptop. It renders, shows key names
+that would be dropped/added and same/DIFFERS per key, asks before swapping, keeps `.env.bak`, and
+restarts nothing.
 
 <!-- SHARED-CONVENTIONS:BEGIN v=b2025c189bb4 — auto-managed, do not edit here; source: prompt-lab/workflow/claude-md-shared.md (edit + re-sync) -->
 ## Shared conventions
