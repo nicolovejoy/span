@@ -43,7 +43,7 @@
 
 **Files:**
 - Create: `pi/.env.tpl`, `pi/render_env.sh`, `pi/tools/seed_phrpi_span_env.sh`
-- Modify: `pi/.env.example` (delete it; the template replaces it, so point `pi/SETUP.md` and any other references at `.env.tpl`)
+- Delete: `pi/.env.example` (the template replaces it). Modify: `CLAUDE.md` § Credentials, the only live reference, to point at `pi/.env.tpl` + `pi/render_env.sh`.
 
 **1Password references** (vault `dev-secrets`):
 - `CLOUDFLARE_TUNNEL_TOKEN` → `phrpi-cloudflared-tunnel-token/credential`
@@ -64,7 +64,7 @@
 - [ ] **Step 3: Nico runs `pi/tools/seed_phrpi_span_env.sh`.** Expected: the 5 field names of the new `phrpi-span-env` item.
 - [ ] **Step 4: Nico runs `pi/render_env.sh` and answers N the first time.** Pass: no dropped keys, the only added keys are `SPAN_SERIAL` and `SPAN_V2_BROKER_PASSWORD`, and every shared key is `same`. A dropped key means it's missing from the template: add it (to `phrpi-span-env` if secret) and re-run. A `DIFFERS` means the wrong 1Password item, or quoting: fix and re-run. Don't proceed until it's clean.
 - [ ] **Step 5: Nico re-runs it and answers y.** No restart is needed: every existing value is identical, and nothing reads the two new keys yet.
-- [ ] **Step 6: Commit:** `git add pi/.env.tpl pi/render_env.sh pi/tools/seed_phrpi_span_env.sh pi/SETUP.md && git rm pi/.env.example && git commit -m "pi: render .env from 1Password via .env.tpl"`.
+- [ ] **Step 6: Commit:** `git add pi/.env.tpl pi/render_env.sh pi/tools/seed_phrpi_span_env.sh CLAUDE.md && git rm pi/.env.example && git commit -m "pi: render .env from 1Password via .env.tpl"`.
 
 ### Task 1: Pure panel state + snapshot rows
 
