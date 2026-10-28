@@ -113,3 +113,25 @@ class PanelState:
             if fields:
                 rows.append({"measurement": "circuit", "tags": {"circuit_id": dev, "name": name}, "fields": fields})
         return rows
+
+
+def poll_result(state: PanelState, now: float, connected: bool, stale_after_s: float = 90.0) -> tuple[str, str]:
+    """(result, error) for one snapshot, in collector_poll's vocabulary.
+
+    Only the panel is judged by age: lugs-up power changes every ~1 s, and 90 s
+    allows for suppressed identical republishes. An idle circuit legitimately never
+    republishes, so circuits are judged only by presence.
+    """
+    if not connected:
+        return "both_fail", "disconnected"
+    if state.last_update is None or now - state.last_update > stale_after_s:
+        return "both_fail", "stale"
+    if not any(r["measurement"] == "circuit" for r in state.rows()):
+        return "circuits_fail", "no_circuits"
+    return "ok", "none"
+
+
+def snapshot_rows(state: PanelState, now: float, connected: bool, stale_after_s: float = 90.0) -> list[dict]:
+    """Rows to write for this snapshot: none while disconnected or stale."""
+    result, _ = poll_result(state, now, connected, stale_after_s)
+    return state.rows() if result in ("ok", "circuits_fail") else []

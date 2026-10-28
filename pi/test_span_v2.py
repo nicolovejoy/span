@@ -143,6 +143,41 @@ class RowsTest(unittest.TestCase):
         self.assertEqual(rows_by(state, "circuit")[0]["tags"]["name"], "B")
 
 
+def full_state(now=0.0):
+    return state_from([
+        (t(UP, "meter/active-power"), "1148.0"),
+        *circuit_c1((t("c1", "meter/active-power"), "-29.3")),
+    ], now=now)
+
+
+class PollResultTest(unittest.TestCase):
+    def test_disconnected_writes_no_rows(self):
+        state = full_state(now=100.0)
+        self.assertEqual(span_v2.poll_result(state, 101.0, connected=False), ("both_fail", "disconnected"))
+        self.assertEqual(span_v2.snapshot_rows(state, 101.0, connected=False), [])
+
+    def test_stale_panel(self):
+        state = full_state(now=0.0)
+        self.assertEqual(span_v2.poll_result(state, 91.0, connected=True), ("both_fail", "stale"))
+        self.assertEqual(span_v2.snapshot_rows(state, 91.0, connected=True), [])
+
+    def test_never_updated_is_stale(self):
+        state = PanelState(SERIAL)
+        self.assertEqual(span_v2.poll_result(state, 0.0, connected=True), ("both_fail", "stale"))
+
+    def test_no_circuits(self):
+        state = state_from([(t(UP, "meter/active-power"), "1148.0")], now=100.0)
+        self.assertEqual(span_v2.poll_result(state, 101.0, connected=True), ("circuits_fail", "no_circuits"))
+        rows = span_v2.snapshot_rows(state, 101.0, connected=True)
+        self.assertEqual([r["measurement"] for r in rows], ["panel"])
+
+    def test_ok(self):
+        state = full_state(now=100.0)
+        self.assertEqual(span_v2.poll_result(state, 101.0, connected=True), ("ok", "none"))
+        rows = span_v2.snapshot_rows(state, 101.0, connected=True)
+        self.assertEqual([r["measurement"] for r in rows], ["panel", "circuit"])
+
+
 class LifecycleTest(unittest.TestCase):
     def test_lifecycle_events(self):
         state = PanelState(SERIAL)
