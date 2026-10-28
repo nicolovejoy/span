@@ -63,6 +63,35 @@ services:
     depends_on:
       - influxdb
 
+  # SPAN v2 (MQTT) collector, shadowing `collector` into *_v2 measurements until
+  # the cutover (#26; plan docs/superpowers/plans/2026-10-28-collector-v2.md).
+  # Secrets go in as files, never env_file (see cloudflared below).
+  collector-v2:
+    build: .
+    container_name: span-collector-v2
+    restart: unless-stopped
+    command: ["python", "-u", "collector_v2.py"]
+    secrets:
+      - span_serial
+      - span_v2_broker_password
+      - influxdb_token
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_ORG=home
+      - INFLUXDB_BUCKET=span
+      - SPAN_PANEL_IP=192.168.4.72
+      - POLL_INTERVAL=30
+      - MEASUREMENT_SUFFIX=_v2
+      - SPAN_SERIAL_FILE=/run/secrets/span_serial
+      - SPAN_V2_BROKER_PASSWORD_FILE=/run/secrets/span_v2_broker_password
+      - INFLUXDB_TOKEN_FILE=/run/secrets/influxdb_token
+    # Containers can't resolve the broker's mDNS name; pin it to the panel's
+    # static IP so TLS hostname verification stays on.
+    extra_hosts:
+      - "span-${SPAN_SERIAL}.local:192.168.4.72"
+    depends_on:
+      - influxdb
+
   bath-detector:
     build: .
     container_name: bath-detector
@@ -198,3 +227,9 @@ volumes:
 secrets:
   tunnel_token:
     environment: CLOUDFLARE_TUNNEL_TOKEN
+  span_serial:
+    environment: SPAN_SERIAL
+  span_v2_broker_password:
+    environment: SPAN_V2_BROKER_PASSWORD
+  influxdb_token:
+    environment: INFLUXDB_TOKEN
