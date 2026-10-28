@@ -34,11 +34,13 @@ from(bucket: "span")
   |> aggregateWindow(every: 1d, fn: '"$2"', createEmpty: false)
   |> group(columns: ["circuit_id", "name"])
   |> pivot(rowKey: ["_time"], columnKey: ["_measurement"], valueColumn: "_value")
-  |> filter(fn: (r) => exists r.circuit and exists r.circuit_v2)
-  |> map(fn: (r) => ({ r with diff: r.circuit_v2 - r.circuit,
-        tol: if '"$3"' * math.abs(x: r.circuit) > '"$4"' then '"$3"' * math.abs(x: r.circuit) else '"$4"' }))
-  |> filter(fn: (r) => math.abs(x: r.diff) > r.tol)
-  |> keep(columns: ["_time", "name", "circuit", "circuit_v2", "diff", "tol"])
+  // A circuit-day present on only one side is a miss, not a silent pass.
+  |> map(fn: (r) => ({ r with
+        missing: if not exists r.circuit_v2 then "v2" else if not exists r.circuit then "v1" else "",
+        diff: if exists r.circuit and exists r.circuit_v2 then r.circuit_v2 - r.circuit else 0.0,
+        tol: if exists r.circuit and '"$3"' * math.abs(x: r.circuit) > '"$4"' then '"$3"' * math.abs(x: r.circuit) else '"$4"' }))
+  |> filter(fn: (r) => r.missing != "" or math.abs(x: r.diff) > r.tol)
+  |> keep(columns: ["_time", "name", "missing", "circuit", "circuit_v2", "diff", "tol"])
 '
 }
 
