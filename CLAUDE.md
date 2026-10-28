@@ -97,10 +97,17 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     compose secret read via `--token-file` (2026-09-19, prompt-lab #55) — never re-add `--token`
     or `env_file: .env` to this service; either puts secrets back in `docker inspect`. Source of
     truth for the token: 1Password `dev-secrets` → `phrpi-cloudflared-tunnel-token` (field
-    `credential`); the live copy is `CLOUDFLARE_TUNNEL_TOKEN` in the Pi's `pi/.env` (the Pi has no
-    `op`, and there is no `pi/.env.tpl`). To rotate: Cloudflare dashboard → tunnel → Add a connector
-    → Refresh token, update both places, then `docker compose up -d --force-recreate --no-deps
-    cloudflared` (`--force-recreate` because compose doesn't notice a changed secret value alone).
+    `credential`); the Pi's `pi/.env` is rendered from it via `pi/.env.tpl` (see § Credentials;
+    the Pi has no `op`). To rotate: Cloudflare dashboard → tunnel → Add a connector → Refresh
+    token, update the 1Password item, run `pi/render_env.sh` from the laptop, then `docker compose
+    up -d --force-recreate --no-deps cloudflared` (`--force-recreate` because compose doesn't
+    notice a changed secret value alone). Never hand-edit the Pi's `.env`.
+  - `collector-v2` (`collector_v2.py` + pure `span_v2.py`) — the SPAN v2 MQTT collector (#26),
+    running in shadow mode since 2026-10-28, writing `panel_v2` / `circuit_v2` /
+    `collector_poll_v2` / `panel_lifecycle_v2`. Secrets are compose file secrets (no `env_file`).
+    Exits after 10 min without an ok snapshot so the container restarts and re-fetches the panel
+    CA. Compare against v1 with `pi/tools/compare_v2.sh 3`; plan
+    `docs/superpowers/plans/2026-10-28-collector-v2.md` (Task 5 = compare, then cutover).
   - `grafana/provisioning/` - Auto-configured datasource + dashboards, incl. `pi-health.json`
     (uid `pi-health`) — collector poll failure rate, host + container metrics (#16)
 - `web/` - Next.js power-explorer dashboard (Vercel-hosted, see § web/)
@@ -152,7 +159,13 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 subagent. The list below is near-term mechanics; the roadmap explains ordering and why.
 
 - **#26 — SPAN removes the v1 REST API on 2026-12-31. FIRST, ahead of `/trends`** (decided
-  2026-10-27). Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
+  2026-10-27). **Status 2026-10-28:** spike done (findings
+  `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md` — v1 energy is a ~15-min-delayed
+  snapshot of the same accumulator v2 pushes every 1–2 s); `collector-v2` deployed in shadow mode
+  on branch `v2-collector` (Pi checkout is on that branch until merge). **Next: on/after
+  2026-11-01 run `ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`** (empty miss
+  sections = pass), then cutover per plan Task 5 with Nico's OK. Still on v1 after cutover:
+  `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
   `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
   app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's
   own MQTT broker (port 8883, username = serial, Homie topics per circuit). Still LAN-only. Plan
