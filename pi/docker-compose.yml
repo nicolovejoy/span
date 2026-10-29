@@ -137,6 +137,21 @@ services:
     depends_on:
       - influxdb
 
+  wall-connector:
+    build: .
+    container_name: wall-connector
+    restart: unless-stopped
+    command: ["python", "-u", "wall_connector_poller.py", "--loop"]
+    env_file:
+      - .env
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - INFLUXDB_ORG=home
+      - INFLUXDB_BUCKET=span
+    depends_on:
+      - influxdb
+
   hvac-classifier:
     build: .
     container_name: hvac-classifier
