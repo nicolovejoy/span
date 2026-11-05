@@ -75,9 +75,11 @@ def test_send_email_posts_text_part(monkeypatch):
     monkeypatch.delenv("DRY_RUN", raising=False)
     resp = MagicMock()
     resp.json.return_value = {"id": "abc"}
-    with patch.object(d.httpx, "post", return_value=resp) as post:
+    fake_httpx = MagicMock()
+    fake_httpx.post.return_value = resp
+    with patch.object(d, "httpx", fake_httpx):
         d.send_email("<h2>Hi</h2><p>there</p>", "subj")
-    body = post.call_args.kwargs["json"]
+    body = fake_httpx.post.call_args.kwargs["json"]
     assert body["subject"] == "subj"
     assert body["html"] == "<h2>Hi</h2><p>there</p>"
     assert body["text"] == "Hi\n\nthere"
@@ -86,9 +88,10 @@ def test_send_email_posts_text_part(monkeypatch):
 def test_send_email_dry_run_posts_nothing(monkeypatch):
     import daily_report as d
     monkeypatch.setenv("DRY_RUN", "1")
-    with patch.object(d.httpx, "post") as post:
+    fake_httpx = MagicMock()
+    with patch.object(d, "httpx", fake_httpx):
         d.send_email("<p>x</p>", "subj")
-    post.assert_not_called()
+    fake_httpx.post.assert_not_called()
 
 
 UTC = timezone.utc
