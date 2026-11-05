@@ -78,6 +78,14 @@ class RenderCoolEmailTest(unittest.TestCase):
         self.assertIn("Wednesday, September 9", html)
         self.assertIn("1.2 kWh", html)
 
+    def test_links_to_the_day_filtered_to_hvac(self):
+        stats = dr.CoolStats(minutes=90, runs=2, kwh=1.2,
+                             first_start=datetime(2026, 9, 9, 20, 35, tzinfo=UTC))
+        _, html = dr.render_cool_email(date(2026, 9, 9), stats)
+        self.assertEqual(html.count("href="), 1)
+        self.assertIn('href="https://span.pianohouseproject.org/?from=', html)
+        self.assertIn("show=HVAC", html)
+
     def test_single_run_wording(self):
         stats = dr.CoolStats(minutes=20, runs=1, kwh=0.3,
                              first_start=datetime(2026, 9, 10, 13, 25, tzinfo=UTC))

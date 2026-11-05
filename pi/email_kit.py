@@ -5,6 +5,8 @@ the base look is inlined onto each tag; the single <style> block left in the
 document only carries the dark-mode override for clients that honour it."""
 import html as _html
 import re
+from datetime import datetime
+from urllib.parse import quote
 
 _H = "color:#2c3e50;"
 _CELL = "padding:6px 12px;text-align:left;border-bottom:1px solid #eee"
@@ -92,3 +94,24 @@ def wrap_email(body: str) -> str:
             f'<meta name="color-scheme" content="light dark">\n'
             f'<meta name="supported-color-schemes" content="light dark">\n{_DARK}\n</head>\n'
             f'<body>\n{_WRAP_DIV}\n{inline_styles(body)}\n</div>\n</body></html>')
+
+
+def dash_url(base: str, *, range_: str | None = None, show: tuple[str, ...] = (),
+             start: datetime | None = None, end: datetime | None = None,
+             drill: str | None = None) -> str:
+    """Explorer intent URL. `start`/`end` (tz-aware) become epoch ms; they and
+    `range_` are mutually exclusive. `show` commas stay literal."""
+    if range_ and (start or end):
+        raise ValueError("range_ and start/end are mutually exclusive")
+    params = []
+    if range_:
+        params.append(f"range={quote(range_, safe='')}")
+    if start:
+        params.append(f"from={int(start.timestamp() * 1000)}")
+    if end:
+        params.append(f"to={int(end.timestamp() * 1000)}")
+    if show:
+        params.append("show=" + ",".join(quote(v, safe="") for v in show))
+    if drill:
+        params.append(f"drill={quote(drill, safe='')}")
+    return base.rstrip("/") + "/?" + "&".join(params)

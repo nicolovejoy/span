@@ -4,6 +4,7 @@
 import argparse
 import base64
 import calendar
+import html as _html
 import io
 import json
 import os
@@ -26,7 +27,7 @@ from rates import ENERGY_RATE, BASE_CHARGE_DAILY
 import report_baseline as rb
 import collector_health as ch
 import attribution
-from email_kit import html_to_text, wrap_email
+from email_kit import dash_url, html_to_text, wrap_email
 from hvac_modes import COOL_MIN_TEMP_F
 
 logging.basicConfig(
@@ -45,6 +46,7 @@ REPORT_FROM = os.getenv("REPORT_FROM", "SPAN Monitor <energy@span.pianohouseproj
 REPORT_HOUR = int(os.getenv("REPORT_HOUR", "7"))
 LOCAL_TZ_NAME = os.getenv("TZ", "America/Los_Angeles")
 LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://span.pianohouseproject.org")
 STATE_PATH = Path(os.getenv("REPORT_STATE_PATH", "/app/state/anomaly_state.json"))
 # A full charge on the largest common EV pack (~100 kWh) plus AC charging
 # losses; any single day's Car usage under this is normal EV behavior, not an
@@ -68,6 +70,29 @@ def local_day_utc_range(d: date) -> tuple[datetime, datetime]:
     start = datetime(d.year, d.month, d.day, tzinfo=LOCAL_TZ)
     end = start + timedelta(days=1)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _esc(value) -> str:
+    """HTML-escape a category/circuit name for interpolation into email HTML."""
+    return _html.escape(str(value), quote=True)
+
+
+def day_link(target_date: date, category: str | None = None, drill: bool = False) -> str:
+    """Explorer link for the Pacific calendar day `target_date` (23-25h on DST
+    days), optionally filtered to one category and drilled into it."""
+    start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=LOCAL_TZ)
+    return dash_url(DASHBOARD_URL, start=start, end=start + timedelta(days=1),
+                    show=(category,) if category else (),
+                    drill=category if (drill and category) else None)
+
+
+def week_link(week_start: date, category: str | None = None) -> str:
+    """Explorer link for Monday 00:00 to next Monday 00:00 Pacific."""
+    start = datetime(week_start.year, week_start.month, week_start.day, tzinfo=LOCAL_TZ)
+    nxt = week_start + timedelta(days=7)
+    end = datetime(nxt.year, nxt.month, nxt.day, tzinfo=LOCAL_TZ)
+    return dash_url(DASHBOARD_URL, start=start, end=end,
+                    show=(category,) if category else ())
 
 
 # ---------- circuit source routing (issue #9) ----------
@@ -859,7 +884,7 @@ def render_headline(ctx: WeeklyContext) -> str:
     week_delta = _delta_arrow_pct(h["delta_vs_last_week_pct"], " vs last week")
     avg_delta = _delta_arrow_pct(h["delta_vs_12wk_pct"], " vs 12-wk avg")
     mo_delta = _delta_arrow_pct(h["delta_vs_12mo_pct"], " vs 12-mo avg")
-    mover = (f' The biggest mover was <strong>{h["top_mover"]}</strong> '
+    mover = (f' The biggest mover was <strong>{_esc(h["top_mover"])}</strong> '
             f'({h["top_mover_delta_kwh"]:+.1f} kWh vs last week).'
             if h["top_mover"] else "")
     return f'''<h2>Weekly Energy Report &mdash; {ctx.date_str}</h2>
@@ -969,14 +994,14 @@ def render_usage_table(ctx: WeeklyContext) -> str:
     rows_html = []
     for r in ctx.usage_rows:
         rows_html.append(
-            f'<tr><td>{r["category"]}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
+            f'<tr><td>{_esc(r["category"])}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
             f'<td>{pct_cell(r["delta_week_pct"])}</td><td>{pct_cell(r["delta_12wk_pct"])}</td>'
             f'<td>{pct_cell(r["delta_12mo_pct"])}</td></tr>'
         )
         if r["top_circuits"]:
-            nested = ", ".join(f'{name} ({kwh:.1f} kWh)' for name, kwh in r["top_circuits"])
+            nested = ", ".join(f'{_esc(name)} ({kwh:.1f} kWh)' for name, kwh in r["top_circuits"])
             rows_html.append(
-                f'<tr><td colspan="6" style="font-size:11px;color:#888;padding-left:24px;">'
+                f'<tr><td colspan="6" style="padding:6px 12px;border-bottom:1px solid #eee;font-size:11px;color:#888;padding-left:24px;">'
                 f'{nested}</td></tr>'
             )
     return f'''<h3>Usage by category</h3>
@@ -1038,8 +1063,19 @@ def render_hvac_block(ctx: WeeklyContext) -> str:
 </p>'''
 
 
+def render_explore_links(ctx: WeeklyContext) -> str:
+    """Closing section: deep links into the explorer for this week."""
+    def a(url: str, label: str) -> str:
+        return f'<a href="{_html.escape(url, quote=True)}">{label}</a>'
+    return (f'<h3>Explore in the dashboard</h3>\n'
+            f'<p>{a(week_link(ctx.week_start), "This week, all categories")}</p>\n'
+            f'<p>{a(week_link(ctx.week_start, "HVAC"), "This week, HVAC only")}</p>\n'
+            f'<p>{a(dash_url(DASHBOARD_URL, range_="1y"), "12-month trend")}</p>')
+
+
 WEEKLY_SECTIONS = [render_headline, render_week_by_day_chart, render_12wk_trend_chart,
-                  render_12mo_trend_chart, render_usage_table, render_hvac_block]
+                  render_12mo_trend_chart, render_usage_table, render_hvac_block,
+                  render_explore_links]
 
 
 def build_weekly_html(ctx: WeeklyContext) -> str:
@@ -1120,11 +1156,13 @@ def render_anomaly_email(target_date: date,
 
     blocks = []
     for cat, value, baseline, result in alerts:
-        circuits = ", ".join(f"{n} ({k:.1f} kWh)" for n, k in top_circuits.get(cat, [])[:3])
-        blocks.append(f'''<h3>{cat}</h3>
+        circuits = ", ".join(f"{_esc(n)} ({k:.1f} kWh)" for n, k in top_circuits.get(cat, [])[:3])
+        link = _html.escape(day_link(target_date, cat, drill=True), quote=True)
+        blocks.append(f'''<h3>{_esc(cat)}</h3>
 <p>{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
 {target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
-<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>''')
+<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
+<p><a href="{link}">Open {_esc(cat)} on {target_date.strftime("%A")} in the dashboard</a></p>''')
 
     html = wrap_email(f'''<h2>Unusual usage &mdash; {target_date.strftime("%A, %B %-d")}</h2>
 {"".join(blocks)}''')
@@ -1357,7 +1395,8 @@ def render_cool_email(target_date: date, stats: CoolStats) -> tuple[str, str]:
 <p>The classifier labels a non-hot-water heat-pump run <code>cool</code> whenever the outdoor
 temperature is at or above {COOL_MIN_TEMP_F:.0f}&deg;F &mdash; it has no
 thermostat signal. If the thermostats are on heat, the Stiebel ran cooling on its own comfort
-setpoint. Set <code>HVAC_COOL_ALERT=0</code> in <code>pi/.env</code> for cooling season.</p>''')
+setpoint. Set <code>HVAC_COOL_ALERT=0</code> in <code>pi/.env</code> for cooling season.</p>
+<p><a href="{_html.escape(day_link(target_date, "HVAC"), quote=True)}">Open HVAC on {target_date.strftime("%A")} in the dashboard</a></p>''')
     return subject, html
 
 

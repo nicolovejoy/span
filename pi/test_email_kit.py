@@ -1,7 +1,10 @@
 """email_kit: inlined styles, plain-text part, client-safe wrapper."""
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from email_kit import html_to_text, inline_styles, wrap_email
+import pytest
+
+from email_kit import dash_url, html_to_text, inline_styles, wrap_email
 
 
 def test_inline_styles_adds_style_to_bare_tags():
@@ -86,3 +89,31 @@ def test_send_email_dry_run_posts_nothing(monkeypatch):
     with patch.object(d.httpx, "post") as post:
         d.send_email("<p>x</p>", "subj")
     post.assert_not_called()
+
+
+UTC = timezone.utc
+
+
+def test_dash_url_range():
+    assert dash_url("https://h.test/", range_="7d", show=("HVAC",)) == "https://h.test/?range=7d&show=HVAC"
+
+
+def test_dash_url_window_is_epoch_ms():
+    start = datetime(2026, 11, 4, 8, 0, tzinfo=UTC)
+    url = dash_url("https://h.test", start=start, end=start + timedelta(hours=1))
+    assert url == "https://h.test/?from=1793779200000&to=1793782800000"
+
+
+def test_dash_url_rejects_range_and_window_together():
+    start = datetime(2026, 11, 4, 8, 0, tzinfo=UTC)
+    with pytest.raises(ValueError):
+        dash_url("https://h.test", range_="7d", start=start, end=start + timedelta(hours=1))
+
+
+def test_dash_url_show_commas_literal():
+    assert dash_url("https://h.test", show=("HVAC", "Lights")) == "https://h.test/?show=HVAC,Lights"
+    assert dash_url("https://h.test", show=("HVAC",), drill="HVAC") == "https://h.test/?show=HVAC&drill=HVAC"
+
+
+def test_dash_url_quotes_show_values():
+    assert dash_url("https://h.test", show=("A&B c",)) == "https://h.test/?show=A%26B%20c"

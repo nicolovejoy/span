@@ -303,6 +303,34 @@ class RenderTest(unittest.TestCase):
         html = dr.render_usage_table(ctx)   # must not raise on None deltas
         self.assertIn("Car", html)
 
+    def test_weekly_html_has_explore_links(self):
+        import re
+        html = dr.build_weekly_html(self.make_ctx())
+        hrefs = re.findall(r'href="([^"]*)"', html)
+        self.assertEqual(len(hrefs), 3)
+        for h in hrefs:
+            self.assertTrue(h.startswith("https://span.pianohouseproject.org/"), h)
+        self.assertEqual(sum("range=1y" in h for h in hrefs), 1)
+        self.assertEqual(sum("show=HVAC" in h for h in hrefs), 1)
+        # week link spans Monday 00:00 to next Monday 00:00 Pacific, all categories
+        start, _ = dr.local_day_utc_range(date(2026, 8, 3))
+        end, _ = dr.local_day_utc_range(date(2026, 8, 10))
+        week = [h for h in hrefs if "from=" in h and "show=" not in h]
+        self.assertEqual(len(week), 1)
+        self.assertIn(f"from={int(start.timestamp() * 1000)}&amp;to={int(end.timestamp() * 1000)}", week[0])
+
+    def test_usage_table_escapes_names_and_pads_nested_row(self):
+        ctx = self.make_ctx(usage_rows=[{"category": "R&D <x>", "kwh": 1.0, "cost": 0.1,
+                                        "delta_week_pct": None, "delta_12wk_pct": None,
+                                        "delta_12mo_pct": None,
+                                        "top_circuits": [("A&B <c>", 1.0)]}])
+        html = dr.render_usage_table(ctx)
+        self.assertIn("R&amp;D &lt;x&gt;", html)
+        self.assertIn("A&amp;B &lt;c&gt;", html)
+        self.assertNotIn("<x>", html)
+        self.assertIn("padding:6px 12px;border-bottom:1px solid #eee;font-size:11px", html)
+        self.assertIn("padding-left:24px", html)
+
     def test_build_weekly_html_concatenates_sections(self):
         html = dr.build_weekly_html(self.make_ctx())
         self.assertIn("<html>", html)
@@ -396,6 +424,60 @@ class AnomalyCheckTest(unittest.TestCase):
         self.assertIn("HVAC", subject)
         self.assertIn("above normal for a Tuesday", subject)
         self.assertIn("Heat pump", html)
+
+    def _anomaly_alerts(self):
+        import report_baseline as rb
+        base = rb.compute_baseline([10, 11, 10, 9, 10, 11, 10, 9])
+        zero = rb.compute_baseline([0, 0, 0, 0, 0, 0, 0, 0])
+        return [("HVAC", 20.0, base, rb.evaluate(20.0, base)),
+                ("Car", 5.0, zero, rb.evaluate(5.0, zero))]
+
+    def test_anomaly_email_links_each_category(self):
+        from email_kit import html_to_text
+        alerts = self._anomaly_alerts()
+        self.assertIsNone(alerts[1][3].pct)   # median-0 path
+        _, html = dr.render_anomaly_email(date(2026, 8, 18), alerts, {})
+        text = html_to_text(html)
+        for cat in ("HVAC", "Car"):
+            self.assertIn(f"Open {cat} on Tuesday in the dashboard", html)
+            self.assertIn(f"show={cat}&amp;drill={cat}", html)
+        self.assertEqual(html.count('href="https://span.pianohouseproject.org/?from='), 2)
+        self.assertIn("https://span.pianohouseproject.org/?from=", text)
+        self.assertIn("show=Car&drill=Car", text)
+
+    def test_href_ampersands_are_escaped(self):
+        import re
+        _, html = dr.render_anomaly_email(date(2026, 8, 18), self._anomaly_alerts(), {})
+        hrefs = re.findall(r'href="([^"]*)"', html)
+        self.assertTrue(hrefs)
+        for h in hrefs:
+            self.assertIn("&amp;", h)
+            self.assertFalse(re.search(r"&(?!amp;)", h), h)
+
+    def test_anomaly_email_escapes_names_but_text_part_is_plain(self):
+        import report_baseline as rb
+        from email_kit import html_to_text
+        base = rb.compute_baseline([10, 11, 10, 9, 10, 11, 10, 9])
+        _, html = dr.render_anomaly_email(
+            date(2026, 8, 18), [("R&D <x>", 20.0, base, rb.evaluate(20.0, base))],
+            {"R&D <x>": [("A&B <c>", 18.0)]})
+        self.assertIn("R&amp;D &lt;x&gt;", html)
+        self.assertIn("A&amp;B &lt;c&gt;", html)
+        self.assertNotIn("<x>", html)
+        text = html_to_text(html)
+        self.assertIn("R&D <x>", text)
+        self.assertIn("A&B <c>", text)
+
+    def test_day_link_dst_fall_back_is_25_hours(self):
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(dr.day_link(date(2026, 11, 1))).query)
+        self.assertEqual(int(q["to"][0]) - int(q["from"][0]), 25 * 3600 * 1000)
+
+    def test_day_link_category_and_drill(self):
+        self.assertIn("show=HVAC", dr.day_link(date(2026, 8, 18), "HVAC"))
+        self.assertNotIn("drill", dr.day_link(date(2026, 8, 18), "HVAC"))
+        self.assertTrue(dr.day_link(date(2026, 8, 18), "HVAC", drill=True).endswith("show=HVAC&drill=HVAC"))
+        self.assertNotIn("show", dr.day_link(date(2026, 8, 18)))
 
     def test_generate_anomaly_check_sends_nothing_on_a_normal_day(self):
         with mock.patch.object(dr, "query_day_coverage", return_value=1.0), \
