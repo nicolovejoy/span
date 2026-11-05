@@ -134,6 +134,34 @@ class SuppressionStateTest(unittest.TestCase):
         self.assertIsNone(rb.load_state(self.path, "HVAC").last_alert_date)
         self.assertIsNotNone(rb.load_state(self.path, "Lights").last_alert_date)
 
+    def test_save_state_keeps_episode_start(self):
+        rb.save_state(self.path, "HVAC", date(2026, 11, 1), 4.2)
+        rb.save_state(self.path, "HVAC", date(2026, 11, 3), 5.6)
+        state = rb.load_state(self.path, "HVAC")
+        self.assertEqual(state.since, date(2026, 11, 1))
+        self.assertEqual(state.last_alert_date, date(2026, 11, 3))
+        self.assertAlmostEqual(state.last_z, 5.6)
+
+    def test_clear_state_then_save_starts_new_episode(self):
+        rb.save_state(self.path, "HVAC", date(2026, 11, 1), 4.2)
+        rb.clear_state(self.path, "HVAC")
+        rb.save_state(self.path, "HVAC", date(2026, 11, 5), 4.0)
+        self.assertEqual(rb.load_state(self.path, "HVAC").since, date(2026, 11, 5))
+
+    def test_load_state_legacy_entry_without_since(self):
+        self.path.write_text(json.dumps({"HVAC": {"date": "2026-11-02", "z": 4.1}}))
+        state = rb.load_state(self.path, "HVAC")
+        self.assertEqual(state.since, date(2026, 11, 2))
+        self.assertEqual(state.last_alert_date, date(2026, 11, 2))
+
+    def test_save_state_on_legacy_entry_keeps_fallback_since(self):
+        self.path.write_text(json.dumps({"HVAC": {"date": "2026-11-02", "z": 4.1}}))
+        rb.save_state(self.path, "HVAC", date(2026, 11, 4), 6.0)
+        self.assertEqual(rb.load_state(self.path, "HVAC").since, date(2026, 11, 2))
+
+    def test_state_with_no_entry_has_no_since(self):
+        self.assertIsNone(rb.load_state(self.path, "HVAC").since)
+
     def test_a_six_day_heat_wave_produces_one_alert_not_six(self):
         """The failure this whole design exists to avoid (spec, 'Guard: repeat
         suppression'). A flat, non-worsening anomaly stays suppressed for the

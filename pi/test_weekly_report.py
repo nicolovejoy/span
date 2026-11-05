@@ -713,6 +713,56 @@ class HvacModeSplitTest(unittest.TestCase):
         self.assertIn("HVAC", subject)
         self.assertNotIn("Hot water", html)
 
+    def test_anomaly_email_new_today_label(self):
+        subject, html = dr.render_anomaly_email(
+            date(2026, 8, 18), self._alerts("HVAC"), {}, episode_since={})
+        self.assertIn("<strong>NEW today</strong>", html)
+        self.assertNotIn("day", subject.replace("Tuesday", ""))
+        # None and since == target_date behave the same as a missing category
+        _, html2 = dr.render_anomaly_email(
+            date(2026, 8, 18), self._alerts("HVAC"), {},
+            episode_since={"HVAC": date(2026, 8, 18)})
+        self.assertIn("NEW today", html2)
+
+    def test_anomaly_email_day_n_label_and_subject_suffix(self):
+        subject, html = dr.render_anomaly_email(
+            date(2026, 11, 4), self._alerts("HVAC"), {},
+            episode_since={"HVAC": date(2026, 11, 2)})
+        self.assertIn("Day 3 since Nov 2", html)
+        self.assertNotIn("NEW today", html)
+        self.assertTrue(subject.endswith(" \u00b7 day 3"), subject)
+
+    def test_anomaly_multi_category_subject_unchanged(self):
+        subject, html = dr.render_anomaly_email(
+            date(2026, 11, 4), self._alerts("HVAC") + self._alerts("Car"), {},
+            episode_since={"HVAC": date(2026, 11, 2)})
+        self.assertEqual(subject, "\u26a1 Unusual usage: HVAC, Car")
+        self.assertIn("Day 3 since Nov 2", html)
+        self.assertIn("NEW today", html)
+
+    def test_generate_anomaly_check_passes_episode_since_after_save(self):
+        import report_baseline as rb
+        target = date(2026, 8, 18)
+        sample_dates = rb.trailing_same_weekday_dates(target, 8)
+        rows = [("Heat pump", d, v)
+                for d, v in zip(sample_dates, [9, 10, 11, 10, 9, 11, 10, 9])]
+        rows.append(("Heat pump", target, 40.0))
+        saved = rb.SuppressionState(last_alert_date=target, last_z=20.0,
+                                    since=date(2026, 8, 16))
+        fresh = rb.SuppressionState(last_alert_date=None, last_z=None)
+        # first load (pre-alert) is fresh; load after save returns the saved state
+        loads = [fresh, saved] + [fresh] * 50
+        with mock.patch.object(dr, "query_day_coverage", return_value=1.0), \
+             mock.patch.object(dr, "query_daily_circuit_counter_kwh", return_value=rows), \
+             mock.patch.object(dr.rb, "load_state", side_effect=loads), \
+             mock.patch.object(dr.rb, "save_state"), \
+             mock.patch.object(dr, "query_hvac_mode_intervals", return_value=[]), \
+             mock.patch.object(dr, "send_email") as sent:
+            dr.generate_anomaly_check(mock.Mock(), target)
+        html, subject = sent.call_args[0]
+        self.assertIn("Day 3 since Aug 16", html)
+        self.assertTrue(subject.endswith(" \u00b7 day 3"), subject)
+
     def _generate(self, category, intervals_kw):
         import report_baseline as rb
         target = date(2026, 8, 18)

@@ -85,6 +85,7 @@ def category_coverage_ok(samples_present: int, required: int = 6) -> bool:
 class SuppressionState:
     last_alert_date: date | None
     last_z: float | None
+    since: date | None = None   # episode start; None only when there is no entry
 
 
 def _load_json(path: Path) -> dict:
@@ -100,15 +101,20 @@ def load_state(path: Path, category: str) -> SuppressionState:
     entry = _load_json(path).get(category)
     if not entry:
         return SuppressionState(None, None)
-    return SuppressionState(
-        last_alert_date=date.fromisoformat(entry["date"]) if entry.get("date") else None,
-        last_z=entry.get("z"),
-    )
+    last = date.fromisoformat(entry["date"]) if entry.get("date") else None
+    # Entries written before episode tracking have no "since"; the last alert
+    # date is the best available estimate of the episode start.
+    since = date.fromisoformat(entry["since"]) if entry.get("since") else last
+    return SuppressionState(last_alert_date=last, last_z=entry.get("z"), since=since)
 
 
 def save_state(path: Path, category: str, alert_date: date, z: float | None) -> None:
+    """Records an alert. An existing entry means the episode is ongoing, so its
+    start (`since`) is kept; clear_state() is what ends an episode."""
     data = _load_json(path)
-    data[category] = {"date": alert_date.isoformat(), "z": z}
+    prior = data.get(category) or {}
+    since = prior.get("since") or prior.get("date") or alert_date.isoformat()
+    data[category] = {"date": alert_date.isoformat(), "z": z, "since": since}
     path.write_text(json.dumps(data))
 
 

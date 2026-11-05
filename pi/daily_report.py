@@ -1191,9 +1191,18 @@ def query_day_coverage(query_api, target_date: date) -> float:
 def render_anomaly_email(target_date: date,
                          alerts: list[tuple[str, float, "rb.Baseline", "rb.AnomalyResult"]],
                          top_circuits: dict[str, list[tuple[str, float]]],
-                         mode_split: dict[str, float] | None = None) -> tuple[str, str]:
+                         mode_split: dict[str, float] | None = None,
+                         episode_since: dict[str, date] | None = None) -> tuple[str, str]:
     """(subject, html). Subject carries the whole message — most days it's
-    actionable without opening (spec: 'The anomaly email' > Content)."""
+    actionable without opening (spec: 'The anomaly email' > Content).
+    `episode_since` maps category -> episode start; a missing category (or one
+    starting on target_date) reads as new, otherwise "Day N since Mon D"."""
+    episode_since = episode_since or {}
+
+    def episode_days(cat: str) -> int:
+        since = episode_since.get(cat)
+        return (target_date - since).days + 1 if since else 1
+
     if len(alerts) == 1:
         cat, value, baseline, result = alerts[0]
         if result.pct is None:
@@ -1206,6 +1215,8 @@ def render_anomaly_email(target_date: date,
             direction = "above" if value > baseline.median else "below"
             subject = (f"⚡ {cat} {result.pct:.0f}% {direction} normal for a "
                       f"{target_date.strftime('%A')}")
+        if episode_days(cat) > 1:
+            subject += f" · day {episode_days(cat)}"
     else:
         subject = f"⚡ Unusual usage: {', '.join(c for c, *_ in alerts)}"
 
@@ -1218,8 +1229,11 @@ def render_anomaly_email(target_date: date,
             split_line = (f'<p>Heat {mode_split.get("heat", 0.0):.1f} &middot; '
                           f'Cool {mode_split.get("cool", 0.0):.1f} &middot; '
                           f'Hot water {mode_split.get("hot_water", 0.0):.1f} kWh that day.</p>\n')
+        n = episode_days(cat)
+        age = ("<strong>NEW today</strong> &middot; " if n <= 1 else
+               f"Day {n} since {episode_since[cat].strftime('%b %-d')} &middot; ")
         blocks.append(f'''<h3>{_esc(cat)}</h3>
-<p>{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
+<p>{age}{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
 {target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
 {split_line}<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
 <p><a href="{link}">Open {_esc(cat)} on {target_date.strftime("%A")} in the dashboard</a></p>''')
@@ -1245,6 +1259,7 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
     day_cat = category_day_kwh(rows)
 
     alerts = []
+    episode_since: dict[str, date] = {}
     for category in _all_categories():
         samples = [day_cat[d][category] for d in sample_dates
                   if d in day_cat and category in day_cat[d]]
@@ -1265,6 +1280,9 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
             if rb.should_alert(result, state):
                 alerts.append((category, value, baseline, result))
                 rb.save_state(STATE_PATH, category, target_date, result.z)
+                since = rb.load_state(STATE_PATH, category).since
+                if since is not None:
+                    episode_since[category] = since
         else:
             rb.clear_state(STATE_PATH, category)
 
@@ -1282,7 +1300,8 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
                 query_api, flux_ts(day_start), flux_ts(day_stop)))
         except Exception as e:
             logger.warning(f"{target_date}: hvac_mode query failed, omitting mode split: {e}")
-    subject, html = render_anomaly_email(target_date, alerts, top_circuits, mode_split)
+    subject, html = render_anomaly_email(target_date, alerts, top_circuits, mode_split,
+                                         episode_since)
     send_email(html, subject)
 
 
