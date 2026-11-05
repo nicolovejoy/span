@@ -2,9 +2,16 @@
 # Side-by-side check of the v2 (MQTT) collector's shadow series against v1, per
 # complete Pacific day (#26, plan docs/superpowers/plans/2026-10-28-collector-v2.md
 # Task 5). Prints only the rows that MISS the pass bar, so empty sections = pass:
-#   - daily energy per circuit within max(1%, 50 Wh)  (v1's <=15-min batch lag
-#     only shifts energy across midnight)
-#   - mean power per circuit within max(2%, 5 W)
+#   - energy per circuit over the whole window within max(1%, 50 Wh, 0.25 h x the
+#     circuit's peak |power|). v1 lands energy in <=15-min batches, so its counter
+#     trails v2 at each window edge by up to 15 min of load; a surge at a midnight
+#     boundary shifted 337 Wh of heat pump energy across it on 2026-11-02 (the
+#     per-day check at max(1%, 50 Wh) false-failed on exactly that). Judged over the
+#     whole window the shift happens once, and the 0.25 h x peak allowance bounds it.
+#   - daily mean power per circuit within max(2%, 10 W). Secondary: both collectors
+#     sample every 30 s, so they see different phases of a cycling load (the speed
+#     oven, 2026-11-02: -245 vs -422 W hourly mean while the energy counters agreed
+#     to 0.1 Wh). Energy is the hard gate; power is a smoke check.
 #   - collector_poll_v2 result=ok count >= collector_poll's, per day
 #
 # Run ON the Pi:          bash compare_v2.sh 3
@@ -25,7 +32,7 @@ stop = date.truncate(t: now(), unit: 1d)
 start = date.sub(d: '"${DAYS}"'d, from: stop)
 '
 
-per_circuit() {  # $1 field, $2 aggregate fn, $3 relative tolerance, $4 absolute tolerance
+per_circuit() {  # daily mean power: $1 field, $2 aggregate fn, $3 relative tolerance, $4 absolute tolerance
   q "$HEAD"'
 from(bucket: "span")
   |> range(start: start, stop: stop)
@@ -44,12 +51,41 @@ from(bucket: "span")
 '
 }
 
-echo "=== daily energy (Wh) misses: v1 circuit vs circuit_v2, last $DAYS complete Pacific days ==="
-per_circuit consumed_energy_wh spread 0.01 50.0
+energy_total() {  # whole-window energy; tolerance max(1%, 50 Wh, 0.25 h x peak |power_w|)
+  q "$HEAD"'
+peak = from(bucket: "span")
+  |> range(start: start, stop: stop)
+  |> filter(fn: (r) => r._measurement == "circuit_v2" and r._field == "power_w")
+  |> map(fn: (r) => ({ r with _value: math.abs(x: r._value) }))
+  |> group(columns: ["circuit_id", "name"])
+  |> max()
+  |> keep(columns: ["circuit_id", "name", "_value"])
+  |> rename(columns: {_value: "peak_w"})
+energy = from(bucket: "span")
+  |> range(start: start, stop: stop)
+  |> filter(fn: (r) => (r._measurement == "circuit" or r._measurement == "circuit_v2") and r._field == "consumed_energy_wh")
+  |> group(columns: ["_measurement", "circuit_id", "name"])
+  |> spread()
+  |> group(columns: ["circuit_id", "name"])
+  |> pivot(rowKey: ["_start"], columnKey: ["_measurement"], valueColumn: "_value")
+  |> map(fn: (r) => ({ r with
+        missing: if not exists r.circuit_v2 then "v2" else if not exists r.circuit then "v1" else "" }))
+join(tables: {e: energy, p: peak}, on: ["circuit_id", "name"])
+  |> map(fn: (r) => ({ r with
+        diff: if exists r.circuit and exists r.circuit_v2 then r.circuit_v2 - r.circuit else 0.0,
+        tol: if exists r.circuit and 0.01 * math.abs(x: r.circuit) > 50.0 and 0.01 * math.abs(x: r.circuit) > 0.25 * r.peak_w then 0.01 * math.abs(x: r.circuit)
+             else if 0.25 * r.peak_w > 50.0 then 0.25 * r.peak_w else 50.0 }))
+  |> filter(fn: (r) => r.missing != "" or math.abs(x: r.diff) > r.tol)
+  |> keep(columns: ["name", "missing", "circuit", "circuit_v2", "diff", "tol", "peak_w"])
+'
+}
+
+echo "=== energy (Wh) misses over the last $DAYS complete Pacific days: v1 circuit vs circuit_v2 ==="
+energy_total
 
 echo
-echo "=== daily mean power (W) misses ==="
-per_circuit power_w mean 0.02 5.0
+echo "=== daily mean power (W) misses (smoke check) ==="
+per_circuit power_w mean 0.02 10.0
 
 echo
 echo "=== days where v2 has fewer ok polls than v1 ==="

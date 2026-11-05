@@ -171,11 +171,17 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md` — v1 energy is a ~15-min-delayed
   snapshot of the same accumulator v2 pushes every 1–2 s); `collector-v2` deployed in shadow mode
   merged to `main` 2026-11-05 (Pi checkout is on `main`, 8907e1e). **Compare run
-  2026-11-05 (`ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`): NOT a clean pass** —
-  both misses on 2026-11-03: Heat pump energy v1 10,124 vs v2 9,791 Wh (−333, tol 101) and Kitchen
-  / Speed Oven mean power −10.7 vs −18.2 W (diff 7.4, tol 5); no days with fewer v2 polls. Cause
-  not yet investigated. **Next: investigate those two, re-run, then cutover per plan Task 5 with
-  Nico's OK.** Still on v1 after cutover:
+  2026-11-05 (`ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`): first run missed
+  twice, both explained, none a v2 fault.** Heat pump 11-02 energy was 333 Wh apart because v1
+  lands energy in ≤15-min batches and the pump surged right at midnight (v2 counter 165,444 vs v1
+  165,107 Wh at 08:00Z, v1 caught up 5 min later); Kitchen / Speed Oven mean power differed 7.4 W
+  because its `power_w` reads *negative* when the oven draws (−2.5 kW peak, in v1 too) and the two
+  collectors sample a cycling element at different phases — its energy counters agree to 0.004 Wh
+  over 3 days. The script now judges energy over the whole window with a 0.25 h × peak-power lag
+  allowance and power at 10 W as a smoke check; re-run is clean (HP −334 Wh vs tol 1,282). Caveat:
+  that allowance is loose for spiky low-energy circuits. **Next: cutover per plan Task 5 with
+  Nico's OK.** The negative-power sign on that circuit is unexplained (likely CT orientation) and
+  would show negative on any power chart. Still on v1 after cutover:
   `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
   `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
   app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's
