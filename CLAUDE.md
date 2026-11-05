@@ -86,6 +86,11 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     (`HVAC_COOL_ALERT=1` in `pi/.env`, ≥15 min of `cool` intervals yesterday) — on for heating
     season, off for cooling season. Added 2026-09-10 after the Stiebel ran cooling on its own
     comfort setpoint (since raised 22.5→24°C) while the Honeywells sat on heat.
+    Email overhaul (plan `docs/superpowers/plans/2026-11-05-email-overhaul.md`, code 2026-11-05):
+    `email_kit.py` (inlined styles, plain-text part, dark-mode wrapper; needs its Dockerfile COPY,
+    present) for all four emails, dashboard deep links, a heat/cool/hot-water split in the weekly
+    briefing and HVAC anomaly email (from `hvac_mode`), and anomaly emails that say NEW today or
+    Day N since …, backed by episode-start state. Pi deploy status not verified.
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
     `telemetry` bucket (#16)
@@ -165,9 +170,12 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   2026-10-27). **Status 2026-10-28:** spike done (findings
   `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md` — v1 energy is a ~15-min-delayed
   snapshot of the same accumulator v2 pushes every 1–2 s); `collector-v2` deployed in shadow mode
-  merged to `main` 2026-11-05 (Pi checkout is on `main`, 8907e1e). **Next: on/after
-  2026-11-01 run `ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`** (empty miss
-  sections = pass), then cutover per plan Task 5 with Nico's OK. Still on v1 after cutover:
+  merged to `main` 2026-11-05 (Pi checkout is on `main`, 8907e1e). **Compare run
+  2026-11-05 (`ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`): NOT a clean pass** —
+  both misses on 2026-11-03: Heat pump energy v1 10,124 vs v2 9,791 Wh (−333, tol 101) and Kitchen
+  / Speed Oven mean power −10.7 vs −18.2 W (diff 7.4, tol 5); no days with fewer v2 polls. Cause
+  not yet investigated. **Next: investigate those two, re-run, then cutover per plan Task 5 with
+  Nico's OK.** Still on v1 after cutover:
   `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
   `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
   app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's
@@ -187,10 +195,10 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `charge_event` is still to do. Open: a restart /
   firmware-change signal from the panel so the anomaly email says "panel restarted" instead of
   reporting usage (the v2 status endpoint has no uptime — fold into #26's spike).
-- **Pre-existing test failures:** 5 tests in `pi/test_weekly_report.py` fail on `main` because
-  that file's matplotlib stub lacks `subplots` / `ticker` (noticed 2026-10-27, not fixed). Run the
-  Pi suite with `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client
-  --with tzdata --with matplotlib pytest -q`; 256 pass, those 5 fail (2026-11-05).
+- **Pi test suite:** all green, 312 pass (2026-11-05). The 5 `test_weekly_report.py` failures were
+  a stub-order bug, fixed by the shared matplotlib stub in `pi/conftest.py` (f00cba8). Run with
+  `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client --with tzdata
+  --with matplotlib pytest -q`.
 - **#14 sub-project 2 — heat/cool/hot-water split — SHIPPED 2026-08-28.** Deployed to the Pi,
   `hvac_mode` backfilled to 2026-01-04 (67,608 intervals), merged to `main`, smoke-tested live.
   Spec/plan/findings under `docs/superpowers/` (the ≥95% bath-parity gate was waived at 83.3% —
