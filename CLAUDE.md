@@ -165,7 +165,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   2026-10-27). **Status 2026-10-28:** spike done (findings
   `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md` — v1 energy is a ~15-min-delayed
   snapshot of the same accumulator v2 pushes every 1–2 s); `collector-v2` deployed in shadow mode
-  on branch `v2-collector` (Pi checkout is on that branch until merge). **Next: on/after
+  merged to `main` 2026-11-05 (Pi checkout is on `main`, 8907e1e). **Next: on/after
   2026-11-01 run `ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`** (empty miss
   sections = pass), then cutover per plan Task 5 with Nico's OK. Still on v1 after cutover:
   `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
