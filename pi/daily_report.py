@@ -26,6 +26,7 @@ from rates import ENERGY_RATE, BASE_CHARGE_DAILY
 import report_baseline as rb
 import collector_health as ch
 import attribution
+from email_kit import html_to_text, wrap_email
 from hvac_modes import COOL_MIN_TEMP_F
 
 logging.basicConfig(
@@ -821,18 +822,6 @@ def seconds_until_hour(hour: int) -> float:
     return (target - now).total_seconds()
 
 
-CSS = """
-body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333; }
-h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; }
-h3 { color: #2c3e50; margin-top: 24px; }
-table { border-collapse: collapse; width: 100%; margin: 8px 0; }
-th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #eee; }
-th { background: #f8f9fa; font-weight: 600; }
-table.summary td { text-align: right; }
-table.summary th:first-child, table.summary td:first-child { text-align: left; }
-"""
-
-
 def send_email(html: str, subject: str):
     """Send report email via Resend API. DRY_RUN=1 logs instead of sending —
     used for read-only dry-runs against real data (#16 gap check) and is
@@ -848,6 +837,7 @@ def send_email(html: str, subject: str):
             "to": [REPORT_EMAIL],
             "subject": subject,
             "html": html,
+            "text": html_to_text(html),
         },
         timeout=30.0,
     )
@@ -1054,11 +1044,7 @@ WEEKLY_SECTIONS = [render_headline, render_week_by_day_chart, render_12wk_trend_
 
 def build_weekly_html(ctx: WeeklyContext) -> str:
     body = "\n\n".join(s for s in (section(ctx) for section in WEEKLY_SECTIONS) if s)
-    return f'''<!DOCTYPE html>
-<html><head><style>{CSS}</style></head>
-<body>
-{body}
-</body></html>'''
+    return wrap_email(body)
 
 
 def generate_weekly_report(client: InfluxDBClient, week_start: date):
@@ -1140,12 +1126,8 @@ def render_anomaly_email(target_date: date,
 {target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
 <p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>''')
 
-    html = f'''<!DOCTYPE html>
-<html><head><style>{CSS}</style></head>
-<body>
-<h2>Unusual usage &mdash; {target_date.strftime("%A, %B %-d")}</h2>
-{"".join(blocks)}
-</body></html>'''
+    html = wrap_email(f'''<h2>Unusual usage &mdash; {target_date.strftime("%A, %B %-d")}</h2>
+{"".join(blocks)}''')
     return subject, html
 
 
@@ -1284,14 +1266,10 @@ def render_gap_email(target_date: date, stats: ch.GapStats,
     else:
         breakdown_line = "no collector_poll data for this day (pre-#16 deploy?)"
 
-    html = f'''<!DOCTYPE html>
-<html><head><style>{CSS}</style></head>
-<body>
-<h2>Collector gap &mdash; {target_date.strftime("%A, %B %-d")}</h2>
+    html = wrap_email(f'''<h2>Collector gap &mdash; {target_date.strftime("%A, %B %-d")}</h2>
 <p>{stats.present} of {stats.expected} expected polls present ({stats.coverage:.1%} coverage).</p>
 {gap_line}
-<p>Breakdown: {breakdown_line}</p>
-</body></html>'''
+<p>Breakdown: {breakdown_line}</p>''')
     return subject, html
 
 
@@ -1373,17 +1351,13 @@ def render_cool_email(target_date: date, stats: CoolStats) -> tuple[str, str]:
     first_local = stats.first_start.astimezone(LOCAL_TZ).strftime("%H:%M") if stats.first_start else "?"
     subject = (f"❄️ Heat pump cooled {_fmt_duration(stats.minutes * 60)} yesterday "
                f"({stats.runs} {runs_word}, first {first_local})")
-    html = f'''<!DOCTYPE html>
-<html><head><style>{CSS}</style></head>
-<body>
-<h2>Heat pump cooling &mdash; {target_date.strftime("%A, %B %-d")}</h2>
+    html = wrap_email(f'''<h2>Heat pump cooling &mdash; {target_date.strftime("%A, %B %-d")}</h2>
 <p>{_fmt_duration(stats.minutes * 60)} of <code>cool</code>-labeled intervals across
 {stats.runs} {runs_word}, first starting {first_local} Pacific, {stats.kwh:.1f} kWh.</p>
 <p>The classifier labels a non-hot-water heat-pump run <code>cool</code> whenever the outdoor
 temperature is at or above {COOL_MIN_TEMP_F:.0f}&deg;F &mdash; it has no
 thermostat signal. If the thermostats are on heat, the Stiebel ran cooling on its own comfort
-setpoint. Set <code>HVAC_COOL_ALERT=0</code> in <code>pi/.env</code> for cooling season.</p>
-</body></html>'''
+setpoint. Set <code>HVAC_COOL_ALERT=0</code> in <code>pi/.env</code> for cooling season.</p>''')
     return subject, html
 
 
