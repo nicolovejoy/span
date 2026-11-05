@@ -5,6 +5,7 @@
 
 Pure logic only (summarising `hvac_mode` intervals into cool runs and the
 alert subject); nothing touches InfluxDB or Resend.
+pytest's conftest.py provides the matplotlib stub.
 """
 import sys
 import types
@@ -17,13 +18,6 @@ if "influxdb_client" not in sys.modules:
     _ic = types.ModuleType("influxdb_client")
     _ic.InfluxDBClient = object
     sys.modules["influxdb_client"] = _ic
-if "matplotlib" not in sys.modules:
-    _mpl = types.ModuleType("matplotlib")
-    _mpl.use = lambda *a, **k: None
-    sys.modules["matplotlib"] = _mpl
-    sys.modules["matplotlib.pyplot"] = types.ModuleType("matplotlib.pyplot")
-    sys.modules["matplotlib.ticker"] = types.ModuleType("matplotlib.ticker")
-    sys.modules["matplotlib.dates"] = types.ModuleType("matplotlib.dates")
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 import daily_report as dr   # noqa: E402

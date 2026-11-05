@@ -3,7 +3,7 @@
     cd pi && python3 test_weekly_report.py
 
 Stubs runtime deps the same way test_daily_report_rollups.py does — nothing here
-touches InfluxDB.
+touches InfluxDB. pytest's conftest.py provides the matplotlib stub.
 """
 import os
 import sys
@@ -18,44 +18,6 @@ if "influxdb_client" not in sys.modules:
     _ic = types.ModuleType("influxdb_client")
     _ic.InfluxDBClient = object
     sys.modules["influxdb_client"] = _ic
-if "matplotlib" not in sys.modules:
-    _mpl = types.ModuleType("matplotlib")
-    _mpl.use = lambda *a, **k: None
-    sys.modules["matplotlib"] = _mpl
-
-    class _FakeMplObject:
-        """Generic no-op stand-in for a matplotlib Figure or Axes — every
-        attribute access returns a callable that accepts any args and does
-        nothing, so chart-rendering code can run without a real matplotlib
-        backend. Charts themselves are manual-verify (see the plan); these
-        tests only need the rendering code path not to crash.
-
-        get_ylim/twinx are special-cased so _add_cost_axis's real logic
-        (get_ylim -> twinx -> set_ylim) runs against something tuple- and
-        attribute-shaped instead of the generic None-returning lambda."""
-        def get_ylim(self, *a, **k):
-            return (0.0, 1.0)
-
-        def twinx(self, *a, **k):
-            return _FakeMplObject()
-
-        @property
-        def yaxis(self):
-            return _FakeMplObject()
-
-        def __getattr__(self, name):
-            return lambda *a, **k: None
-
-    _plt = types.ModuleType("matplotlib.pyplot")
-    _plt.subplots = lambda *a, **k: (_FakeMplObject(), _FakeMplObject())
-    _plt.close = lambda *a, **k: None
-    sys.modules["matplotlib.pyplot"] = _plt
-    sys.modules["matplotlib.dates"] = types.ModuleType("matplotlib.dates")
-
-    _mpl_ticker = types.ModuleType("matplotlib.ticker")
-    _mpl_ticker.StrMethodFormatter = lambda *a, **k: None
-    _mpl.ticker = _mpl_ticker
-    sys.modules["matplotlib.ticker"] = _mpl_ticker
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 import daily_report as dr   # noqa: E402
