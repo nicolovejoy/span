@@ -175,13 +175,13 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   twice, both explained, none a v2 fault.** Heat pump 11-02 energy was 333 Wh apart because v1
   lands energy in ≤15-min batches and the pump surged right at midnight (v2 counter 165,444 vs v1
   165,107 Wh at 08:00Z, v1 caught up 5 min later); Kitchen / Speed Oven mean power differed 7.4 W
-  because its `power_w` reads *negative* when the oven draws (−2.5 kW peak, in v1 too) and the two
-  collectors sample a cycling element at different phases — its energy counters agree to 0.004 Wh
+  because the two collectors sample its cycling element at different phases (SPAN reports every
+  load as *negative* `power_w`, v1 and v2 alike; `web/lib/influx.ts` `absValue` flips it, so it's
+  not a bug) — its energy counters agree to 0.004 Wh
   over 3 days. The script now judges energy over the whole window with a 0.25 h × peak-power lag
   allowance and power at 10 W as a smoke check; re-run is clean (HP −334 Wh vs tol 1,282). Caveat:
   that allowance is loose for spiky low-energy circuits. **Next: cutover per plan Task 5 with
-  Nico's OK.** The negative-power sign on that circuit is unexplained (likely CT orientation) and
-  would show negative on any power chart. Still on v1 after cutover:
+  Nico's OK.** Still on v1 after cutover:
   `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
   `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
   app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's

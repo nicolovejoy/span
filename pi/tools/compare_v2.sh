@@ -11,7 +11,8 @@
 #   - daily mean power per circuit within max(2%, 10 W). Secondary: both collectors
 #     sample every 30 s, so they see different phases of a cycling load (the speed
 #     oven, 2026-11-02: -245 vs -422 W hourly mean while the energy counters agreed
-#     to 0.1 Wh). Energy is the hard gate; power is a smoke check.
+#     to 0.1 Wh; SPAN reports every load as negative power_w, in v1 and v2 alike).
+#     Energy is the hard gate; power is a smoke check.
 #   - collector_poll_v2 result=ok count >= collector_poll's, per day
 #
 # Run ON the Pi:          bash compare_v2.sh 3
