@@ -11,7 +11,7 @@ import os
 import re
 import time
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -585,6 +585,11 @@ class WeeklyContext:
     week_by_day: list[tuple[date, dict[str, float]]]
     trend: list[tuple[date, dict[str, float]]]
     month_trend: list[tuple[date, dict[str, float]]]
+    # kWh per hvac_mode for the target week and the prior week (Monday-Monday
+    # Pacific). Empty when the hvac_mode query failed; zero-filled when it
+    # simply returned no rows. render_hvac_split_block shows nothing for either.
+    hvac_modes: dict[str, float] = field(default_factory=dict)
+    hvac_modes_prev: dict[str, float] = field(default_factory=dict)
 
     @property
     def date_str(self) -> str:
@@ -681,10 +686,23 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
     month_trend = [(ms, month_totals(day_cat, ms))
                    for ms in trailing12_month_starts + [target_month_start]]
 
+    hvac_modes: dict[str, float] = {}
+    hvac_modes_prev: dict[str, float] = {}
+    try:
+        this_start, this_stop = (flux_ts(local_day_utc_range(d)[0])
+                                 for d in (week_start, week_start + timedelta(days=7)))
+        prev_start = flux_ts(local_day_utc_range(last_week_start)[0])
+        hvac_modes = mode_kwh(query_hvac_mode_intervals(query_api, this_start, this_stop))
+        hvac_modes_prev = mode_kwh(query_hvac_mode_intervals(query_api, prev_start, this_start))
+    except Exception as e:
+        logger.warning(f"hvac_mode query failed, omitting heat-pump split: {e}")
+        hvac_modes, hvac_modes_prev = {}, {}
+
     return WeeklyContext(
         week_start=week_start, rows=rows, panel_daily=panel_daily, day_cat=day_cat,
         categories=categories, headline=headline, usage_rows=usage_rows,
         week_by_day=week_by_day, trend=trend, month_trend=month_trend,
+        hvac_modes=hvac_modes, hvac_modes_prev=hvac_modes_prev,
     )
 
 
@@ -1063,6 +1081,42 @@ def render_hvac_block(ctx: WeeklyContext) -> str:
 </p>'''
 
 
+HVAC_MODES = ("heat", "cool", "hot_water", "idle", "ambiguous")
+
+
+def mode_kwh(intervals: list[dict]) -> dict[str, float]:
+    """Pure: kWh per hvac_mode over `intervals`. Always returns all five modes
+    (0.0 when absent); unknown modes are ignored."""
+    out = {m: 0.0 for m in HVAC_MODES}
+    for i in intervals:
+        mode = i.get("mode")
+        if mode in out:
+            out[mode] += i.get("energy_kwh") or 0.0
+    return out
+
+
+def render_hvac_split_block(ctx: WeeklyContext) -> str:
+    """Heat pump kWh by mode (heat / cool / hot water / other) this week vs last.
+    Empty when there is no hvac_mode data for the week."""
+    cur, prev = ctx.hvac_modes, ctx.hvac_modes_prev
+    total = sum(cur.values())
+    if total == 0:
+        return ""
+    rows = [("Heat", ("heat",)), ("Cool", ("cool",)), ("Hot water", ("hot_water",)),
+            ("Other", ("idle", "ambiguous"))]
+    body = []
+    for label, keys in rows:
+        this_kwh = sum(cur.get(k, 0.0) for k in keys)
+        last_kwh = sum(prev.get(k, 0.0) for k in keys)
+        body.append(f'<tr><td>{label}</td><td>{this_kwh:.1f}</td>'
+                    f'<td>{this_kwh / total * 100:.0f}%</td><td>{last_kwh:.1f}</td></tr>')
+    return f'''<h3>Heat pump by mode</h3>
+<table class="summary">
+<tr><th>Mode</th><th>kWh this week</th><th>% of total</th><th>kWh last week</th></tr>
+{"".join(body)}
+</table>'''
+
+
 def render_explore_links(ctx: WeeklyContext) -> str:
     """Closing section: deep links into the explorer for this week."""
     def a(url: str, label: str) -> str:
@@ -1075,7 +1129,7 @@ def render_explore_links(ctx: WeeklyContext) -> str:
 
 WEEKLY_SECTIONS = [render_headline, render_week_by_day_chart, render_12wk_trend_chart,
                   render_12mo_trend_chart, render_usage_table, render_hvac_block,
-                  render_explore_links]
+                  render_hvac_split_block, render_explore_links]
 
 
 def build_weekly_html(ctx: WeeklyContext) -> str:
@@ -1136,7 +1190,8 @@ def query_day_coverage(query_api, target_date: date) -> float:
 
 def render_anomaly_email(target_date: date,
                          alerts: list[tuple[str, float, "rb.Baseline", "rb.AnomalyResult"]],
-                         top_circuits: dict[str, list[tuple[str, float]]]) -> tuple[str, str]:
+                         top_circuits: dict[str, list[tuple[str, float]]],
+                         mode_split: dict[str, float] | None = None) -> tuple[str, str]:
     """(subject, html). Subject carries the whole message — most days it's
     actionable without opening (spec: 'The anomaly email' > Content)."""
     if len(alerts) == 1:
@@ -1158,10 +1213,15 @@ def render_anomaly_email(target_date: date,
     for cat, value, baseline, result in alerts:
         circuits = ", ".join(f"{_esc(n)} ({k:.1f} kWh)" for n, k in top_circuits.get(cat, [])[:3])
         link = _html.escape(day_link(target_date, cat, drill=True), quote=True)
+        split_line = ""
+        if cat == "HVAC" and mode_split and any(mode_split.values()):
+            split_line = (f'<p>Heat {mode_split.get("heat", 0.0):.1f} &middot; '
+                          f'Cool {mode_split.get("cool", 0.0):.1f} &middot; '
+                          f'Hot water {mode_split.get("hot_water", 0.0):.1f} kWh that day.</p>\n')
         blocks.append(f'''<h3>{_esc(cat)}</h3>
 <p>{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
 {target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
-<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
+{split_line}<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
 <p><a href="{link}">Open {_esc(cat)} on {target_date.strftime("%A")} in the dashboard</a></p>''')
 
     html = wrap_email(f'''<h2>Unusual usage &mdash; {target_date.strftime("%A, %B %-d")}</h2>
@@ -1214,7 +1274,15 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
     day_rows = [r for r in rows if r[1] == target_date]
     top_circuits = {cat: category_top_circuits(day_rows, target_date, cat, n=3)
                     for cat, *_ in alerts}
-    subject, html = render_anomaly_email(target_date, alerts, top_circuits)
+    mode_split = None
+    if any(cat == "HVAC" for cat, *_ in alerts):
+        try:
+            day_start, day_stop = local_day_utc_range(target_date)
+            mode_split = mode_kwh(query_hvac_mode_intervals(
+                query_api, flux_ts(day_start), flux_ts(day_stop)))
+        except Exception as e:
+            logger.warning(f"{target_date}: hvac_mode query failed, omitting mode split: {e}")
+    subject, html = render_anomaly_email(target_date, alerts, top_circuits, mode_split)
     send_email(html, subject)
 
 

@@ -599,6 +599,154 @@ class AnomalyCheckTest(unittest.TestCase):
         self.assertNotIn("540.0", html)
 
 
+class HvacModeSplitTest(unittest.TestCase):
+    ZERO = {"heat": 0.0, "cool": 0.0, "hot_water": 0.0, "idle": 0.0, "ambiguous": 0.0}
+
+    def make_ctx(self, **overrides):
+        return RenderTest.make_ctx(RenderTest(), **overrides)
+
+    def _alerts(self, cat="HVAC"):
+        import report_baseline as rb
+        base = rb.compute_baseline([10, 11, 10, 9, 10, 11, 10, 9])
+        return [(cat, 20.0, base, rb.evaluate(20.0, base))]
+
+    def test_mode_kwh_sums_and_zero_fills(self):
+        out = dr.mode_kwh([
+            {"start": None, "mode": "heat", "energy_kwh": 0.5},
+            {"start": None, "mode": "heat", "energy_kwh": 0.25},
+            {"start": None, "mode": "hot_water", "energy_kwh": 1.0},
+            {"start": None, "mode": "weird", "energy_kwh": 9.0},
+        ])
+        self.assertEqual(out, {"heat": 0.75, "cool": 0.0, "hot_water": 1.0,
+                               "idle": 0.0, "ambiguous": 0.0})
+
+    def test_mode_kwh_empty_is_all_zero(self):
+        self.assertEqual(dr.mode_kwh([]), self.ZERO)
+
+    def test_hvac_split_block_empty_without_data(self):
+        self.assertEqual(dr.render_hvac_split_block(self.make_ctx()), "")
+        self.assertEqual(dr.render_hvac_split_block(self.make_ctx(hvac_modes=dict(self.ZERO))), "")
+
+    def test_hvac_split_block_rows(self):
+        ctx = self.make_ctx(hvac_modes={**self.ZERO, "heat": 6.0, "hot_water": 2.0},
+                            hvac_modes_prev={**self.ZERO, "heat": 4.0})
+        html = dr.render_hvac_split_block(ctx)
+        self.assertIn("<h3>Heat pump by mode</h3>", html)
+        self.assertIn('<table class="summary">', html)
+        for label in ("Heat", "Cool", "Hot water", "Other"):
+            self.assertIn(label, html)
+        self.assertIn("6.0", html)
+        self.assertIn("75%", html)
+        self.assertIn("4.0", html)
+
+    def test_hvac_split_block_other_sums_idle_and_ambiguous(self):
+        ctx = self.make_ctx(hvac_modes={**self.ZERO, "heat": 1.0, "idle": 0.5, "ambiguous": 0.25})
+        self.assertIn("0.8", dr.render_hvac_split_block(ctx))  # 0.75 -> .1f
+
+    def test_split_block_sits_after_hvac_block_in_sections(self):
+        s = dr.WEEKLY_SECTIONS
+        self.assertEqual(s.index(dr.render_hvac_split_block), s.index(dr.render_hvac_block) + 1)
+
+    def test_weekly_html_omits_split_without_data(self):
+        html = dr.build_weekly_html(self.make_ctx())
+        self.assertNotIn("Heat pump by mode", html)
+
+    def test_context_defaults_are_empty_dicts(self):
+        ctx = self.make_ctx()
+        self.assertEqual(ctx.hvac_modes, {})
+        self.assertEqual(ctx.hvac_modes_prev, {})
+
+    def _build(self, hvac):
+        with mock.patch.object(dr, "query_daily_circuit_counter_kwh", return_value=[]), \
+             mock.patch.object(dr, "query_daily_panel_kwh", return_value=[]), \
+             mock.patch.object(dr, "query_hvac_mode_intervals", **hvac) as q:
+            ctx = dr.build_weekly_context(object(), date(2026, 8, 3))
+        return ctx, q
+
+    def test_build_weekly_context_fills_both_weeks(self):
+        def fake(api, start, stop):
+            return [{"start": None, "mode": "heat",
+                     "energy_kwh": 2.0 if "2026-08-03" in start else 1.0}]
+        ctx, q = self._build({"side_effect": fake})
+        self.assertEqual(q.call_count, 2)
+        self.assertAlmostEqual(ctx.hvac_modes["heat"], 2.0)
+        self.assertAlmostEqual(ctx.hvac_modes_prev["heat"], 1.0)
+        self.assertEqual(ctx.hvac_modes["cool"], 0.0)
+
+    def test_build_weekly_context_hvac_windows_are_pacific_mondays(self):
+        ctx, q = self._build({"return_value": []})
+        starts_stops = [(c.args[1], c.args[2]) for c in q.call_args_list]
+        # Aug 3 2026 is a Monday; PDT = UTC-7
+        self.assertIn(("2026-08-03T07:00:00Z", "2026-08-10T07:00:00Z"), starts_stops)
+        self.assertIn(("2026-07-27T07:00:00Z", "2026-08-03T07:00:00Z"), starts_stops)
+
+    def test_build_weekly_context_empty_query_gives_zero_filled_and_no_block(self):
+        ctx, _ = self._build({"return_value": []})
+        self.assertEqual(ctx.hvac_modes, self.ZERO)
+        self.assertEqual(dr.render_hvac_split_block(ctx), "")
+
+    def test_build_weekly_context_hvac_query_failure_warns_and_leaves_empty(self):
+        with self.assertLogs(dr.logger, level="WARNING") as cm:
+            ctx, _ = self._build({"side_effect": RuntimeError("influx down")})
+        self.assertTrue(any("hvac_mode" in m for m in cm.output))
+        self.assertEqual(ctx.hvac_modes, {})
+        self.assertEqual(ctx.hvac_modes_prev, {})
+        self.assertEqual(dr.render_hvac_split_block(ctx), "")
+
+    def test_anomaly_hvac_block_shows_mode_split(self):
+        split = {"heat": 3.2, "cool": 0.0, "hot_water": 1.1, "idle": 0.0, "ambiguous": 0.0}
+        _, html = dr.render_anomaly_email(date(2026, 8, 18), self._alerts("HVAC"), {},
+                                          mode_split=split)
+        self.assertIn("Heat 3.2", html)
+        self.assertIn("Hot water 1.1", html)
+        _, html = dr.render_anomaly_email(date(2026, 8, 18), self._alerts("Lights"), {},
+                                          mode_split=split)
+        self.assertNotIn("Heat 3.2", html)
+
+    def test_anomaly_all_zero_split_shows_no_line(self):
+        _, html = dr.render_anomaly_email(date(2026, 8, 18), self._alerts("HVAC"), {},
+                                          mode_split=dict(self.ZERO))
+        self.assertNotIn("Hot water", html)
+
+    def test_anomaly_without_mode_split_unchanged(self):
+        subject, html = dr.render_anomaly_email(date(2026, 8, 18), self._alerts("HVAC"), {})
+        self.assertIn("HVAC", subject)
+        self.assertNotIn("Hot water", html)
+
+    def _generate(self, category, intervals_kw):
+        import report_baseline as rb
+        target = date(2026, 8, 18)
+        sample_dates = rb.trailing_same_weekday_dates(target, 8)
+        rows = [(category if category != "HVAC" else "Heat pump", d, v)
+                for d, v in zip(sample_dates, [9, 10, 11, 10, 9, 11, 10, 9])]
+        rows.append((rows[0][0], target, 40.0))
+        fresh = rb.SuppressionState(last_alert_date=None, last_z=None)
+        with mock.patch.object(dr, "query_day_coverage", return_value=1.0), \
+             mock.patch.object(dr, "query_daily_circuit_counter_kwh", return_value=rows), \
+             mock.patch.object(dr.rb, "load_state", return_value=fresh), \
+             mock.patch.object(dr.rb, "save_state"), \
+             mock.patch.object(dr, "query_hvac_mode_intervals", **intervals_kw) as q, \
+             mock.patch.object(dr, "send_email") as sent:
+            dr.generate_anomaly_check(mock.Mock(), target)
+        return q, sent
+
+    def test_generate_anomaly_check_includes_mode_split_for_hvac(self):
+        iv = [{"start": None, "mode": "heat", "energy_kwh": 3.2},
+              {"start": None, "mode": "hot_water", "energy_kwh": 1.1}]
+        q, sent = self._generate("HVAC", {"return_value": iv})
+        q.assert_called_once()
+        html, _ = sent.call_args[0]
+        self.assertIn("Heat 3.2", html)
+        self.assertIn("Hot water 1.1", html)
+
+    def test_generate_anomaly_check_survives_hvac_query_failure(self):
+        with self.assertLogs(dr.logger, level="WARNING"):
+            q, sent = self._generate("HVAC", {"side_effect": RuntimeError("boom")})
+        sent.assert_called_once()
+        html, _ = sent.call_args[0]
+        self.assertNotIn("Hot water", html)
+
+
 class SendEmailDryRunTest(unittest.TestCase):
     def test_dry_run_logs_and_skips_resend(self):
         # httpx is a bare stub module in this test file (no `post` attribute) --
