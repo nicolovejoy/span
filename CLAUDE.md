@@ -45,7 +45,7 @@ directory later means editing the unit and `systemctl daemon-reload` first.
 ## Architecture
 
 - `span_client.py` - CLI client with live terminal dashboard
-- `pi/` - Docker stack for Pi deployment (9 services)
+- `pi/` - Docker stack for Pi deployment (12 services)
   - `collector.py` - Polls SPAN every 30s, writes to InfluxDB; also writes one `collector_poll`
     point per iteration (result/error classification + timings) for observability (#16)
   - `collector_health.py` - Pure gap/coverage math + httpx error classification, no I/O (#16)
@@ -69,6 +69,9 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     `docs/superpowers/notes/2026-10-27-ev-accuracy-findings.md`. After editing a `.flux`:
     `./provision_influx_tasks.sh`, `docker compose build daily-report`, backfill with
     `docker compose run --rm --no-deps …` (without `--no-deps` compose recreates `influxdb`).
+  - `wall_connector_poller.py` - Polls the Tesla Wall Connector Gen 3's unauthenticated local API
+    (192.168.7.124, DHCP-reserved) every 60s into a `wall_connector` measurement: the charger's own
+    cumulative kWh, ground truth for `charge_event`. Not in `/api/health` yet.
   - `weather_poller.py` - Hourly outdoor temp/humidity/cloud-cover from Open-Meteo into a
     `weather` measurement (#14 Phase 1). Unblocks the heat/cool split and cold-weather
     aux-heat suppression (#3) — neither built yet.
@@ -178,14 +181,16 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `docs/superpowers/plans/2026-10-26-trends-view.md` (Tasks 3–9 remain). Part 1 outcome: the
   "October EV split" and the 3,052 kWh anomaly email were one panel-restart counter rebase, fixed
   in the rollup tasks; `charge_event` now covers ~99% of charger energy (was ~44%). Unmonitored
-  unaffected. Open: an external ground truth for the charger (no Tesla app; if the wall unit is a
-  Tesla Wall Connector Gen 3, its local `/api/1/lifetime` has a kWh counter), and a restart /
+  unaffected. Ground truth for the charger: `wall_connector_poller.py` (deployed 2026-10-29) reads the
+  Gen 3 unit's `/api/1/lifetime` + `/vitals` into a `wall_connector` measurement; its absolute
+  counter is unverified, so compare windows by differencing — reconciling it against
+  `charge_event` is still to do. Open: a restart /
   firmware-change signal from the panel so the anomaly email says "panel restarted" instead of
   reporting usage (the v2 status endpoint has no uptime — fold into #26's spike).
 - **Pre-existing test failures:** 5 tests in `pi/test_weekly_report.py` fail on `main` because
   that file's matplotlib stub lacks `subplots` / `ticker` (noticed 2026-10-27, not fixed). Run the
   Pi suite with `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client
-  --with tzdata --with matplotlib pytest -q`; 215 pass, those 5 fail.
+  --with tzdata --with matplotlib pytest -q`; 256 pass, those 5 fail (2026-11-05).
 - **#14 sub-project 2 — heat/cool/hot-water split — SHIPPED 2026-08-28.** Deployed to the Pi,
   `hvac_mode` backfilled to 2026-01-04 (67,608 intervals), merged to `main`, smoke-tested live.
   Spec/plan/findings under `docs/superpowers/` (the ≥95% bath-parity gate was waived at 83.3% —
@@ -262,13 +267,12 @@ plain line in the template), then run `pi/render_env.sh` from the laptop. It ren
 that would be dropped/added and same/DIFFERS per key, asks before swapping, keeps `.env.bak`, and
 restarts nothing.
 
-<!-- SHARED-CONVENTIONS:BEGIN v=b2025c189bb4 — auto-managed, do not edit here; source: prompt-lab/workflow/claude-md-shared.md (edit + re-sync) -->
+<!-- SHARED-CONVENTIONS:BEGIN v=ac9060beffa2 — auto-managed, do not edit here; source: prompt-lab/workflow/claude-md-shared.md (edit + re-sync) -->
 ## Shared conventions
 
 <!-- These are Nico's cross-repo output rules. They're materialized into each repo's
-CLAUDE.md and AGENTS.md so every agent (local, cloud, third-party) sees them as plain
-text. Source of truth: prompt-lab/workflow/claude-md-shared.md — edit there and
-re-sync, never here. -->
+CLAUDE.md so every agent (local, cloud, headless) sees them as plain text. Source of
+truth: prompt-lab/workflow/claude-md-shared.md — edit there and re-sync, never here. -->
 
 - **Clickable URLs.** When pointing at any web destination (dashboard, repo, PR, deploy, settings, docs, localhost), print the full bare URL — `https://example.com` or `http://localhost:8080` — on its own, never just the page's name and never a markdown `[label](url)` link. Nico's terminal auto-linkifies raw `https://` text, so a bare URL is one-click and stays copyable.
 
@@ -285,4 +289,6 @@ re-sync, never here. -->
 - **Reader-facing text lives in content or copy files, not inline in components.** Some repos ship French alongside English (selected-projects mirrors the site under `/fr`; ibuild4you has French public pages). There, every new string goes in the repo's strings/copy module or content folder, with its translation, and an English copy edit means updating the French twin too. Elsewhere, keeping text out of components is what makes `/localize` cheap later. Terms and register: `prompt-lab/workflow/localization/fr-glossary.md`.
 
 - **A review another agent must act on goes on the PR.** A review that another agent must act on, or that must outlive the session, is posted as a PR comment (`gh pr comment`), where the next session or agent finds it. Live, in-session reviews between Nico and the agent stay in chat. There is no devlog.md: the history DB is the one session record.
+
+- **Browser testing runs headless.** A headed browser takes focus on Nico's Mac. Run Playwright headless, with Edge (`channel: 'msedge'`) for desktop runs wherever a config picks a browser. Never use `headless: false`, `--headed`, `--debug`, `--ui` or `PWDEBUG` unless Nico asks for it in this session. For a visual check, take a screenshot or record a trace (`trace: 'on-first-retry'` or `'on'`) instead of opening a window. The Claude-in-Chrome extension is the one thing that drives Nico's real Chrome, on purpose.
 <!-- SHARED-CONVENTIONS:END -->
