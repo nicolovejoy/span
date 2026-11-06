@@ -45,9 +45,10 @@ directory later means editing the unit and `systemctl daemon-reload` first.
 ## Architecture
 
 - `span_client.py` - CLI client with live terminal dashboard
-- `pi/` - Docker stack for Pi deployment (12 services)
-  - `collector.py` - Polls SPAN every 30s, writes to InfluxDB; also writes one `collector_poll`
-    point per iteration (result/error classification + timings) for observability (#16)
+- `pi/` - Docker stack for Pi deployment (11 services)
+  - `collector.py` - **Retired 2026-11-05** (v1 REST, dies 2026-12-31 with SPAN's v1 API). Kept, along
+    with `SPAN_ACCESS_TOKEN` in `pi/.env.tpl`, as the rollback path until then: revert c98e7f4 and
+    `docker compose up -d --no-deps --build collector`. Delete both after a quiet stretch.
   - `collector_health.py` - Pure gap/coverage math + httpx error classification, no I/O (#16)
   - `hvac_modes.py` - Pure 5-min interval bucketing + two-stage heat/cool/hot-water/idle/ambiguous
     classification, no I/O (#14 sub-project 2)
@@ -110,12 +111,14 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     token, update the 1Password item, run `pi/render_env.sh` from the laptop, then `docker compose
     up -d --force-recreate --no-deps cloudflared` (`--force-recreate` because compose doesn't
     notice a changed secret value alone). Never hand-edit the Pi's `.env`.
-  - `collector-v2` (`collector_v2.py` + pure `span_v2.py`) — the SPAN v2 MQTT collector (#26),
-    running in shadow mode since 2026-10-28, writing `panel_v2` / `circuit_v2` /
-    `collector_poll_v2` / `panel_lifecycle_v2`. Secrets are compose file secrets (no `env_file`).
-    Exits after 10 min without an ok snapshot so the container restarts and re-fetches the panel
-    CA. Compare against v1 with `pi/tools/compare_v2.sh 3`; plan
-    `docs/superpowers/plans/2026-10-28-collector-v2.md` (Task 5 = compare, then cutover).
+  - `collector_v2.py` + pure `span_v2.py` — **the collector** (compose service `collector`, container
+    `span-collector`) since the 2026-11-05 cutover (#26): subscribes to the panel's MQTT broker
+    (8883, Homie topics), snapshots every 30s into `panel` / `circuit` / `collector_poll` /
+    `panel_lifecycle` — the same schema v1 wrote, so downstream is untouched. Also writes one
+    `collector_poll` point per snapshot (result/error + `panel_age_ms`) for observability (#16).
+    Secrets are compose file secrets (no `env_file`). Exits after 10 min without an ok snapshot so
+    the container restarts and re-fetches the panel CA. The `*_v2` measurements are shadow-run
+    history (2026-10-28 → 11-05), harmless; drop whenever.
   - `grafana/provisioning/` - Auto-configured datasource + dashboards, incl. `pi-health.json`
     (uid `pi-health`) — collector poll failure rate, host + container metrics (#16)
 - `web/` - Next.js power-explorer dashboard (Vercel-hosted, see § web/)
@@ -166,30 +169,19 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 **Start at `docs/roadmap.md`** — phased, dependency-ordered, each phase scoped to hand to a
 subagent. The list below is near-term mechanics; the roadmap explains ordering and why.
 
-- **#26 — SPAN removes the v1 REST API on 2026-12-31. FIRST, ahead of `/trends`** (decided
-  2026-10-27). **Status 2026-10-28:** spike done (findings
-  `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md` — v1 energy is a ~15-min-delayed
-  snapshot of the same accumulator v2 pushes every 1–2 s); `collector-v2` deployed in shadow mode
-  merged to `main` 2026-11-05 (Pi checkout is on `main`, 8907e1e). **Compare run
-  2026-11-05 (`ssh nico@phrpi.local 'bash -s' -- 3 < pi/tools/compare_v2.sh`): first run missed
-  twice, both explained, none a v2 fault.** Heat pump 11-02 energy was 333 Wh apart because v1
-  lands energy in ≤15-min batches and the pump surged right at midnight (v2 counter 165,444 vs v1
-  165,107 Wh at 08:00Z, v1 caught up 5 min later); Kitchen / Speed Oven mean power differed 7.4 W
-  because the two collectors sample its cycling element at different phases (SPAN reports every
-  load as *negative* `power_w`, v1 and v2 alike; `web/lib/influx.ts` `absValue` flips it, so it's
-  not a bug) — its energy counters agree to 0.004 Wh
-  over 3 days. The script now judges energy over the whole window with a 0.25 h × peak-power lag
-  allowance and power at 10 W as a smoke check; re-run is clean (HP −334 Wh vs tol 1,282). Caveat:
-  that allowance is loose for spiky low-energy circuits. **Next: cutover per plan Task 5 with
-  Nico's OK.** Still on v1 after cutover:
-  `span_client.py`, `pi/hvac_probe.py`. Everything that talks to the panel is v1 (`pi/collector.py`, `span_client.py`,
-  `pi/hvac_probe.py`). Replacement: `POST /api/v2/auth/register` (door-switch proximity or the
-  app's passphrase) → `accessToken` + `ebusBrokerPassword`; live readings come from the panel's
-  own MQTT broker (port 8883, username = serial, Homie topics per circuit). Still LAN-only. Plan
-  in the issue: spike (register, subscribe, confirm which topic equals the v1
-  `consumedEnergyWh` counter and the push cadence) → collector v2 writing the *same* `panel` /
-  `circuit` measurements → side-by-side run → cut over. Watch the 30s-cadence assumptions in
-  `pi/influx_tasks/*.flux` (`bucketPeriod = bucketEvery + 30s`) and `collector_health.py`.
+- **#26 — v1 REST API removed by SPAN on 2026-12-31. Collector CUT OVER to v2 MQTT 2026-11-05**
+  (c98e7f4). Shadow-run compare (`pi/tools/compare_v2.sh`) was clean once its per-day energy check
+  stopped false-failing on v1's ≤15-min batch lag at midnight (heat pump 11-02, 337 Wh shifted
+  across the boundary). Verified at cutover: `/api/health` 200, `status.sh` green, 21 circuits per
+  poll as before, heat pump counter stepped +368 Wh once at the switch (v1's held-back batch;
+  matches the 5-min power integral, no double count). From 2026-11-06 the morning emails run on v2
+  data. Remaining before 2026-12-31: (1) after a quiet stretch, delete `collector.py`,
+  `SPAN_ACCESS_TOKEN` (from `pi/.env.tpl` and the `phrpi-span-env` 1Password item, then
+  `pi/render_env.sh`; expect one dropped key) and the rollback note in `pi/docker-compose.yml`;
+  (2) port or retire `span_client.py` and `pi/hvac_probe.py`, both still v1; (3) optional: surface
+  `panel_lifecycle` as "panel restarted" in the anomaly email. Spike findings
+  `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md`; plan
+  `docs/superpowers/plans/2026-10-28-collector-v2.md`.
 - **Trends view (`/trends`) — Part 1 (EV accuracy) SHIPPED 2026-10-27; Part 2 deferred behind
   #26.** Spec `docs/superpowers/specs/2026-10-26-trends-view-design.md`, plan
   `docs/superpowers/plans/2026-10-26-trends-view.md` (Tasks 3–9 remain). Part 1 outcome: the
@@ -264,8 +256,14 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
 
 ## SPAN API
 
-Base URL: `http://192.168.4.72/api/v1` — **removed by SPAN on 2026-12-31** (every `/api/v1/*`
-path 404s after that; see #26 in Next Steps for the v2 + MQTT replacement).
+**The collector uses v2 (since 2026-11-05):** `POST /api/v2/auth/register` (door-switch proximity or
+the app's passphrase) → `accessToken` + `ebusBrokerPassword`; readings come from the panel's own MQTT
+broker (8883, username = serial, Homie topics per circuit), LAN-only. `GET /api/v2/status` is
+unauthenticated (what `status.sh` probes); `GET /api/v2/certificate/ca` serves the broker's CA.
+Circuit loads are *negative* `power_w` in both APIs; consumers take `abs()`.
+
+v1, below, is what `span_client.py` and `pi/hvac_probe.py` still use. Base URL
+`http://192.168.4.72/api/v1` — **removed by SPAN on 2026-12-31** (every `/api/v1/*` path 404s).
 
 - `GET /status` - Unauthenticated: firmware version, `system.uptime`, serial. Not polled yet.
 - `POST /auth/register` - Register client (door-proximity: toggle 3x)
