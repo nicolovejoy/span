@@ -37,7 +37,7 @@ esac
 echo "SPAN status — panel $PANEL, pi $PI"
 
 # --- Reachability -----------------------------------------------------------
-code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$PANEL/api/v1/status" || true)
+code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$PANEL/api/v2/status" || true)
 [ "$code" = 200 ] && ok "panel API" || bad "panel API — HTTP ${code:-timeout}"
 
 if curl -s -m 4 "http://$PI:8086/health" | grep -q '"status": *"pass"'; then

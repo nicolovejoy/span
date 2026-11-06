@@ -25,4 +25,4 @@ COPY categories.json .
 COPY backfill_rollups.py .
 COPY influx_tasks/ ./influx_tasks/
 
-CMD ["python", "-u", "collector.py"]
+CMD ["python", "-u", "collector_v2.py"]

@@ -2,15 +2,16 @@
 
 ## `collector_poll` — per-poll collector health (`span` bucket)
 
-Written by `collector.py`, one point per 30s iteration, best-effort (a write
-failure here never blocks the panel/circuit write). Same timestamp as that
-iteration's data points.
+Written by `collector_v2.py` (since the 2026-11-05 v2 cutover, #26; before that
+`collector.py`), one point per 30s snapshot, best-effort (a write failure here
+never blocks the panel/circuit write). Same timestamp as that snapshot's data
+points.
 
 | | |
 |---|---|
-| Tags | `host`; `result` ∈ `ok`, `panel_fail`, `circuits_fail`, `both_fail`, `write_fail`; `error` ∈ `none`, `timeout`, `connect`, `http_4xx`, `http_5xx`, `decode`, `other` |
-| Field `panel_ms` | int — panel API call duration |
-| Field `circuits_ms` | int — circuits API call duration |
+| Tags | `host`; `result` ∈ `ok`, `circuits_fail`, `both_fail`, `write_fail`; `error` ∈ `none`, `disconnected`, `connect_refused`, `auth_refused`, `stale`, `no_circuits` (plus v1's `timeout`, `connect`, `http_4xx`, `http_5xx`, `decode`, `other`, `panel_fail` in history before 2026-11-05) |
+| Field `panel_age_ms` | int — age of the newest MQTT panel update at snapshot time (absent when not connected) |
+| Fields `panel_ms`, `circuits_ms` | v1 only, history before 2026-11-05 — REST call durations |
 | Field `points` | int — number of data points written this iteration |
 
 Tags are a closed enum, never a raw error message — cardinality stays fixed
