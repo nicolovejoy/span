@@ -14,9 +14,6 @@ Local observability tool for SPAN Smart Panel. Polls panel API, stores data in I
 # One-shot health check of the whole stack (panel, Pi services, freshness, backup)
 ./status.sh
 
-# Terminal dashboard (one-off)
-./run.sh --run
-
 # Full stack lives on the Pi (ssh nico@phrpi.local); manage it there:
 cd pi && docker compose up -d
 ```
@@ -31,7 +28,7 @@ cd pi && docker compose up -d
   roles only (uptime monitoring is external — UptimeRobot via prompt-lab's
   declarative config; candidate second backup target). Revisit only if #18
   (TimescaleDB) lands, which would make it the storage box.
-- **Laptop** — dev only. `status.sh` and `span_client.py` work from here; nothing
+- **Laptop** — dev only. `status.sh` works from here; nothing
   runs in steady state. Checkout is `~/src/span`.
 
 **Repo renamed `SPAN` → `span` on 2026-08-27** (GitHub `nicolovejoy/span`; the old URL still
@@ -44,11 +41,9 @@ directory later means editing the unit and `systemctl daemon-reload` first.
 
 ## Architecture
 
-- `span_client.py` - CLI client with live terminal dashboard
 - `pi/` - Docker stack for Pi deployment (11 services)
-  - `collector.py` - **Retired 2026-11-05** (v1 REST, dies 2026-12-31 with SPAN's v1 API). Kept, along
-    with `SPAN_ACCESS_TOKEN` in `pi/.env.tpl`, as the rollback path until then: revert c98e7f4 and
-    `docker compose up -d --no-deps --build collector`. Delete both after a quiet stretch.
+  - `collector.py` (v1 REST) - **deleted 2026-11-13** after 8 clean days on v2; last in git at
+    c98e7f4^. `SPAN_ACCESS_TOKEN` is gone from `pi/.env.tpl` too.
   - `collector_health.py` - Pure gap/coverage math + httpx error classification, no I/O (#16)
   - `hvac_modes.py` - Pure 5-min interval bucketing + two-stage heat/cool/hot-water/idle/ambiguous
     classification, no I/O (#14 sub-project 2)
@@ -186,10 +181,13 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   across the boundary). Verified at cutover: `/api/health` 200, `status.sh` green, 21 circuits per
   poll as before, heat pump counter stepped +368 Wh once at the switch (v1's held-back batch;
   matches the 5-min power integral, no double count). From 2026-11-06 the morning emails run on v2
-  data. Remaining before 2026-12-31: (1) after a quiet stretch, delete `collector.py`,
-  `SPAN_ACCESS_TOKEN` (from `pi/.env.tpl` and the `phrpi-span-env` 1Password item, then
-  `pi/render_env.sh`; expect one dropped key) and the rollback note in `pi/docker-compose.yml`;
-  (2) port or retire `span_client.py` and `pi/hvac_probe.py`, both still v1; (3) optional: surface
+  data. `collector.py`, the `pi/.env.tpl` line and the compose rollback note were
+  deleted 2026-11-13. Remaining before 2026-12-31: (1) Nico: delete the `SPAN_ACCESS_TOKEN` field
+  from the `phrpi-span-env` 1Password item and run `pi/render_env.sh` (expect one dropped key);
+  until then the Pi's `.env` still carries the unused key, harmless; (2) done 2026-11-13: the
+  v1 laptop tools (`span_client.py`, `discover.py`, `run.sh`, `requirements.txt`) were retired, not
+  ported; nothing in the repo speaks v1 any more. `pi/hvac_probe.py` was listed here by mistake: it
+  reads Influx, not the panel, and needs nothing; (3) optional: surface
   `panel_lifecycle` as "panel restarted" in the anomaly email. Spike findings
   `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md`; plan
   `docs/superpowers/plans/2026-10-28-collector-v2.md`.
@@ -250,7 +248,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
 - **Power explorer chart E2E** (#13) — Playwright harness via a `MOCK_INFLUX` fixture mode. Plan in the issue.
 - **`weather_poller.py` has no dead-service detection.** `normal_run`'s `past_days=2` self-heals a
   single missed poll, but an outage longer than ~2 days leaves a permanent hole only a manual
-  `--backfill` re-run repairs. Unlike `collector.py`, it writes no health point and isn't in
+  `--backfill` re-run repairs. Unlike the collector, it writes no health point and isn't in
   `pi/grafana/provisioning`'s `pi-health.json`. No fix designed yet. The same blind spot exists for
   `hvac_classifier.py` (#14 sub-project 2): its nightly 02:00 Pacific sweep re-backfills the last 2
   completed days, so an outage under ~2 days self-heals, but a longer one still needs a manual
@@ -273,13 +271,8 @@ broker (8883, username = serial, Homie topics per circuit), LAN-only. `GET /api/
 unauthenticated (what `status.sh` probes); `GET /api/v2/certificate/ca` serves the broker's CA.
 Circuit loads are *negative* `power_w` in both APIs; consumers take `abs()`.
 
-v1, below, is what `span_client.py` and `pi/hvac_probe.py` still use. Base URL
-`http://192.168.4.72/api/v1` — **removed by SPAN on 2026-12-31** (every `/api/v1/*` path 404s).
-
-- `GET /status` - Unauthenticated: firmware version, `system.uptime`, serial. Not polled yet.
-- `POST /auth/register` - Register client (door-proximity: toggle 3x)
-- `GET /panel` - Grid power, branch data
-- `GET /circuits` - Named circuits with power/energy
+v1 (`http://192.168.4.72/api/v1`) is **removed by SPAN on 2026-12-31**; nothing in this repo uses it
+since 2026-11-13.
 
 ## Credentials
 

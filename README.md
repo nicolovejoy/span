@@ -1,46 +1,25 @@
 # SPAN Smart Panel Monitor
 
-Local observability tool for monitoring a SPAN Smart Panel via its REST API.
+Local observability for a SPAN Smart Panel: a collector on a Raspberry Pi subscribes to the
+panel's own MQTT broker (SPAN API v2), stores readings in InfluxDB, and a Next.js dashboard and
+Grafana visualize them.
 
-## Setup
+## Layout
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+- `pi/` — the Docker stack that runs on the Pi (collector, detectors, weekly/daily emails, InfluxDB, Grafana). Setup: `pi/SETUP.md`.
+- `web/` — the power-explorer dashboard (Next.js, Vercel-hosted).
+- `status.sh` — one-shot health check of the whole stack, run from any machine on the LAN.
+- `docs/roadmap.md` — what's next and why.
 
 ## Usage
 
-Use the `run.sh` wrapper (handles venv automatically):
-
 ```bash
-./run.sh --register   # one-time, toggle panel door 3x
-./run.sh --run        # start live dashboard
+./status.sh                           # health check
+ssh nico@phrpi.local                  # the stack lives on the Pi
+cd SPAN/pi && docker compose up -d    # start / update it there
 ```
 
-Or manually activate venv first:
-```bash
-source venv/bin/activate
-python span_client.py --run
-```
+Secrets are never hand-edited: `pi/.env` is rendered from 1Password with `pi/render_env.sh`.
 
-Displays a real-time table of circuits sorted by power consumption.
-
-## Configuration
-
-- **Panel IP:** `192.168.4.72` (static IP configured on router)
-- **Access token:** Stored in `.env` after registration (git-ignored)
-
-## Pi Deployment
-
-The `pi/` directory contains a Docker stack for continuous monitoring on a Raspberry Pi.
-
-```bash
-ssh nico@phrpi.local          # connect to Pi
-cd SPAN/pi && docker compose up -d   # start stack
-```
-
-Grafana: `http://phrpi.local:3000` (admin / spanmonitor123)
-
-**Note:** If Grafana won't load in Chrome, try Safari.
+The original v1 REST terminal client (`span_client.py`) was removed on 2026-11-13; SPAN retires
+the v1 API on 2026-12-31. It remains in git history.

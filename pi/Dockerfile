@@ -4,7 +4,6 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir httpx influxdb-client tzdata matplotlib "paho-mqtt>=2"
 
-COPY collector.py .
 COPY collector_health.py .
 COPY span_v2.py .
 COPY collector_v2.py .

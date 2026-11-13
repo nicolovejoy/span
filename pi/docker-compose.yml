@@ -46,10 +46,9 @@ services:
       - influxdb
 
   # SPAN v2 (MQTT) collector, writing panel / circuit / collector_poll (#26; cut
-  # over from the v1 REST collector.py on 2026-11-05). Secrets go in as files,
-  # never env_file (see cloudflared below). Rollback until v1 dies on 2026-12-31:
-  # revert the cutover commit and `docker compose up -d --no-deps --build collector`
-  # (SPAN_ACCESS_TOKEN is still in .env for exactly that).
+  # over from the v1 REST collector on 2026-11-05; v1 code removed 2026-11-13,
+  # last in git at c98e7f4^). Secrets go in as files, never env_file (see
+  # cloudflared below).
   collector:
     build: .
     container_name: span-collector

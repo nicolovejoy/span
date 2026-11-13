@@ -10,9 +10,6 @@
 # listed here: render_env.sh shows any key that would be dropped before it
 # swaps the file in.
 
-# SPAN v1 REST token (pi/collector.py). Delete at the v2 cutover (#26).
-SPAN_ACCESS_TOKEN={{ op://dev-secrets/phrpi-span-env/SPAN_ACCESS_TOKEN }}
-
 # SPAN v2 MQTT client (pi/collector_v2.py), registered 2026-10-27 by door
 # proximity. The serial is private only to keep it out of this public repo.
 SPAN_SERIAL={{ op://dev-secrets/span-panel-v2-client/serial }}

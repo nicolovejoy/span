@@ -47,9 +47,10 @@
    cd span/pi
    ```
 
-2. Create `.env` file with your SPAN token:
+2. Render `pi/.env` from 1Password. Run this on the laptop, not the Pi (the
+   Pi has no `op`); it reads `pi/.env.tpl` and never needs hand-editing:
    ```bash
-   echo "SPAN_ACCESS_TOKEN=your-token-here" > .env
+   pi/render_env.sh
    ```
 
 3. Start the stack:

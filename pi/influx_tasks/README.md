@@ -3,7 +3,7 @@
 ## `collector_poll` — per-poll collector health (`span` bucket)
 
 Written by `collector_v2.py` (since the 2026-11-05 v2 cutover, #26; before that
-`collector.py`), one point per 30s snapshot, best-effort (a write failure here
+the v1 `collector.py`, removed 2026-11-13), one point per 30s snapshot, best-effort (a write failure here
 never blocks the panel/circuit write). Same timestamp as that snapshot's data
 points.
 

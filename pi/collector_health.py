@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pure collector-health math: poll-error classification and gap/coverage
-stats. No Influx, no I/O -- collector.py and daily_report.py own that and
+stats. No Influx, no I/O -- collector_v2.py and daily_report.py own that and
 call into this module. See docs/superpowers/sdd/2026-08-22-pi-observability/
 task-1-brief.md (#16)."""
 

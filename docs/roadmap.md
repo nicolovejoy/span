@@ -12,7 +12,8 @@ the brief. Phases are ordered by dependency, not by appeal.
 ## Where things stand
 
 **Deadline that outranks every phase below (added 2026-10-27): #26.** SPAN removes the v1
-REST API on 2026-12-31; the collector, `span_client.py` and `hvac_probe.py` all speak v1.
+REST API on 2026-12-31. **Done:** the collector cut over to v2 MQTT on 2026-11-05 and the last v1
+code (`collector.py`, `span_client.py`) was deleted 2026-11-13; what follows is history.
 Migrate to v2 auth + the panel's local MQTT broker before then, writing the same `panel` /
 `circuit` measurements so nothing downstream changes. Plan and findings in the issue. The
 `/trends` page (Part 2 of `docs/superpowers/plans/2026-10-26-trends-view.md`) waits behind it.
