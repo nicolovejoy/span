@@ -3,6 +3,18 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* /trends stack layers (validated pairs; spec 2026-10-26-trends-view-design) */
+  --trend-hvacUnsplit: #7d8580;
+  --trend-heat: #eb6834;
+  --trend-cool: #2a78d6;
+  --trend-hotWater: #e87ba4;
+  --trend-hvacOther: #cfd4d1;
+  --trend-hvacOther-hatch: #a6aca8;
+  --trend-car: #1baf7a;
+  --trend-lights: #eda100;
+  --trend-appliances: #6250d6;
+  --trend-rest: #cfd4d1;
+  --trend-grid: #e4e4e7;
 }
 
 @theme inline {
@@ -16,6 +28,17 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --trend-hvacUnsplit: #8a928d;
+    --trend-heat: #d95926;
+    --trend-cool: #3987e5;
+    --trend-hotWater: #d55181;
+    --trend-hvacOther: #454c48;
+    --trend-hvacOther-hatch: #6e7671;
+    --trend-car: #199e70;
+    --trend-lights: #c98500;
+    --trend-appliances: #9085e9;
+    --trend-rest: #454c48;
+    --trend-grid: #27272a;
   }
 }
 
