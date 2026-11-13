@@ -3,6 +3,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { PowerChart, type VisibleChange } from "./PowerChart";
 import { TimeNav } from "./TimeNav";
+import { COPY as TRENDS_COPY } from "@/lib/trendsCopy";
 import { BucketSelector } from "./BucketSelector";
 import { QuickFilters } from "./QuickFilters";
 import { FocusToggle } from "./FocusToggle";
@@ -170,7 +171,12 @@ export function ExplorerClient({
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 sm:gap-6 sm:p-6">
       <header className="focus-hide flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">SPAN — power explorer</h1>
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">SPAN — power explorer</h1>
+          <a href="/trends" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+            {TRENDS_COPY.trendsLink}
+          </a>
+        </div>
         <div className="flex flex-col text-xs text-zinc-500 sm:items-end">
           <div>
             {headerFmt(visible.fromMs)} → {headerFmt(visible.toMs)}

@@ -8,6 +8,7 @@ import { LAYER_ORDER, type LayerKey } from "@/lib/trendLayers";
 import type { TrendBar } from "@/lib/trendsPayload";
 import type { TrendGrain } from "@/lib/trends";
 import { costForKwh, proratedBaseCharge } from "@/lib/rates";
+import type { TrendUnit } from "@/lib/whereItWent";
 import {
   COPY,
   LAYER_LABELS,
@@ -18,7 +19,6 @@ import {
   tickLabel,
 } from "@/lib/trendsCopy";
 
-export type TrendUnit = "kwh" | "usd";
 
 const HEIGHT = 280;
 const PAD = { top: 8, right: 8, bottom: 28, left: 48 };
@@ -181,9 +181,9 @@ export function TrendsChart({
 
         {hovered && hover !== null && (
           <div
-            className="pointer-events-none absolute z-10 w-56 rounded-md border border-zinc-200 bg-white p-2 text-xs shadow-md dark:border-zinc-700 dark:bg-zinc-900"
+            className="pointer-events-none absolute z-10 w-64 rounded-md border border-zinc-200 bg-white p-2 text-xs shadow-md dark:border-zinc-700 dark:bg-zinc-900"
             style={{
-              left: Math.min(Math.max(0, PAD.left + band * hover + band / 2 - 112), width - 224),
+              left: Math.min(Math.max(0, PAD.left + band * hover + band / 2 - 128), width - 256),
               top: 4,
             }}
           >
@@ -197,21 +197,21 @@ export function TrendsChart({
                         <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: k === "hvacOther" ? "var(--trend-hvacOther-hatch)" : `var(--trend-${k})` }} />
                         {LAYER_LABELS[k]}
                       </td>
-                      <td className="text-right tabular-nums">{fmt(v(hovered.layers[k]))}</td>
+                      <td className="whitespace-nowrap text-right tabular-nums">{fmt(v(hovered.layers[k]))}</td>
                     </tr>
                   ) : null,
                 )}
                 {unit === "usd" && (
                   <tr>
                     <td className="pr-2 text-zinc-500">{PANEL_LABELS.baseCharge}</td>
-                    <td className="text-right tabular-nums">
+                    <td className="whitespace-nowrap text-right tabular-nums">
                       {fmt(proratedBaseCharge(hovered.toMs - hovered.fromMs))}
                     </td>
                   </tr>
                 )}
                 <tr className="border-t border-zinc-200 font-semibold dark:border-zinc-700">
                   <td className="pt-1">{COPY.total}</td>
-                  <td className="pt-1 text-right tabular-nums">
+                  <td className="whitespace-nowrap pt-1 text-right tabular-nums">
                     {fmt(
                       v(hovered.layers.totalKwh) +
                         (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0),
