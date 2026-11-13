@@ -176,8 +176,10 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
   shows in `feedthrough_power_w` only as jitter (30s samples swinging 0–750 W around an
   unchanged ~250 W mean, seen 2026-11-13 from 12:30 Pacific), not as a rise in the mean. The same runs below 58°F are labelled heat today. The Control circuit itself
   sits at ~45 W or ~107 W and has been at 107 W nearly continuously since late Sept 2026
-  (was 45 W whenever the compressor idled through June); cause unknown, mechanical contractor
-  visited ~2026-10-05. An in-progress period's bar is drawn at its projected full-period size (energy × calendar
+  (was 45 W whenever the compressor idled through June); cause unknown. Not heating season (Feb–Mar
+  were mostly at 45 W; Jan 14–22 was pinned for nine days) and not tied to the mechanical
+  visit ~2026-10-05. About $5.60/month. Nico looked at the year view 2026-11-13 and chose
+  not to pursue it or contact the contractor; don't re-raise unless it changes. An in-progress period's bar is drawn at its projected full-period size (energy × calendar
   length ÷ elapsed, `projectionFactor` in `lib/trends.ts`; none under 1 day elapsed): faded with a
   dashed outline, a solid line at actual-so-far, and a footnote; the Where-it-went panel stays
   actual (2026-11-13). Periods cache 24h only once 3h past their end. Spec
