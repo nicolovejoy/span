@@ -21,7 +21,7 @@ import type { EnergyRow } from "./influx";
 
 type Entry = { data: SeriesPoint[]; expiresAt: number };
 
-const MAX_ENTRIES = 100;
+export const MAX_ENTRIES = 100;
 const cache = new Map<string, Entry>();
 const inflight = new Map<string, Promise<SeriesPoint[]>>();
 
@@ -201,3 +201,4 @@ export async function cachedQueryEvents(opts: {
   eventsInflight.set(key, promise);
   return promise;
 }
+

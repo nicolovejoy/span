@@ -349,11 +349,24 @@ from(bucket: "${BUCKET}")
  * shows the plain HVAC row, nothing invented.
  */
 async function queryHvacModeRows(fromMs: number, toMs: number): Promise<EnergyRow[]> {
+  return hvacModeRowsFromFieldSums(await queryHvacModeFieldSums(fromMs, toMs));
+}
+
+/** Per-field kWh sums of hvac_mode over [fromMs, toMs): keys
+ *  `energy_<mode>_kwh` for heat, cool, hot_water, idle, ambiguous. Missing
+ *  fields are simply absent (callers default to 0). */
+export async function queryHvacModeFieldSums(
+  fromMs: number,
+  toMs: number,
+): Promise<Record<string, number>> {
+  const fields = ["heat", "cool", "hot_water", "idle", "ambiguous"]
+    .map((m) => `r._field == "energy_${m}_kwh"`)
+    .join(" or ");
   const flux = `
 from(bucket: "${BUCKET}")
   |> range(start: ${fluxDate(fromMs)}, stop: ${fluxDate(toMs)})
   |> filter(fn: (r) => r._measurement == "hvac_mode")
-  |> filter(fn: (r) => r._field == "energy_heat_kwh" or r._field == "energy_cool_kwh" or r._field == "energy_hot_water_kwh")
+  |> filter(fn: (r) => ${fields})
   |> group(columns: ["_field"])
   |> sum()
 `;
@@ -363,7 +376,22 @@ from(bucket: "${BUCKET}")
     const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
     sums[String(o._field)] = Number(o._value) || 0;
   }
-  return hvacModeRowsFromFieldSums(sums);
+  return sums;
+}
+
+/** Sum of bath_event.energy_kwh for events starting in [fromMs, toMs). */
+export async function queryBathKwh(fromMs: number, toMs: number): Promise<number> {
+  const flux = `
+from(bucket: "${BUCKET}")
+  |> range(start: ${fluxDate(fromMs)}, stop: ${fluxDate(toMs)})
+  |> filter(fn: (r) => r._measurement == "bath_event" and r._field == "energy_kwh")
+  |> group()
+  |> sum()
+`;
+  const rows = await makeClient()
+    .getQueryApi(ORG)
+    .collectRows<{ _value: number }>(flux);
+  return Number(rows[0]?._value) || 0;
 }
 
 async function runEnergyFlux(flux: string): Promise<EnergyRow[]> {

@@ -13,7 +13,7 @@ const nowMs = Date.parse("2026-10-26T19:00:00-07:00");
 
 describe("constants", () => {
   it("are Pacific midnights", () => {
-    expect(DATA_START_MS).toBe(Date.parse("2025-12-26T00:00:00-08:00"));
+    expect(DATA_START_MS).toBe(Date.parse("2026-01-03T00:00:00-08:00"));
     expect(HVAC_SPLIT_START_MS).toBe(Date.parse("2026-01-04T00:00:00-08:00"));
   });
 });
@@ -21,9 +21,9 @@ describe("constants", () => {
 describe("trendPeriods — month", () => {
   it("defaults to every month from data start to now, trimmed", () => {
     const ps = trendPeriods({ grain: "month", nowMs });
-    expect(ps).toHaveLength(11);
+    expect(ps).toHaveLength(10);
     expect(ps.map((p) => p.key)).toEqual([
-      "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
+      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
       "2026-06", "2026-07", "2026-08", "2026-09", "2026-10",
     ]);
     expect(ps[0].partialStart).toBe(true);
@@ -37,7 +37,7 @@ describe("trendPeriods — month", () => {
 
   it("ends at an explicit endKey", () => {
     const ps = trendPeriods({ grain: "month", endKey: "2026-09", nowMs });
-    expect(ps).toHaveLength(10);
+    expect(ps).toHaveLength(9);
     expect(ps[ps.length - 1].key).toBe("2026-09");
     expect(ps[ps.length - 1].complete).toBe(true);
   });
@@ -97,10 +97,13 @@ describe("trendPeriods — week", () => {
 describe("trendPeriods — year", () => {
   it("lists every year since data start", () => {
     const ps = trendPeriods({ grain: "year", nowMs });
-    expect(ps.map((p) => p.key)).toEqual(["2025", "2026"]);
+    expect(ps.map((p) => p.key)).toEqual(["2026"]);
     expect(ps[0].partialStart).toBe(true);
-    expect(ps[0].complete).toBe(true);
-    expect(ps[1].complete).toBe(false);
+    expect(ps[0].complete).toBe(false);
+    const later = Date.parse("2027-02-01T12:00:00-08:00");
+    const ys = trendPeriods({ grain: "year", nowMs: later });
+    expect(ys.map((p) => p.key)).toEqual(["2026", "2027"]);
+    expect(ys[0].complete).toBe(true);
   });
 });
 

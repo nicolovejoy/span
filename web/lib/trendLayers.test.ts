@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { LAYER_ORDER, deriveLayers, type PeriodEnergy } from "./trendLayers";
+import { LAYER_ORDER, combinePeriodEnergy, deriveLayers, type PeriodEnergy } from "./trendLayers";
 
 const zeroModes = { heat: 0, cool: 0, hotWater: 0, idle: 0, ambiguous: 0 };
 
-function energy(p: Partial<PeriodEnergy> & { categories?: Record<string, number> }): PeriodEnergy {
+function energy(p: Partial<Omit<PeriodEnergy, "modes">> & { modes?: Partial<PeriodEnergy["modes"]> }): PeriodEnergy {
   return {
     categories: { HVAC: 0, Car: 0, Lights: 0, Appliances: 0, Else: 0, Unmonitored: 0, ...p.categories },
     preSplitHvacKwh: p.preSplitHvacKwh ?? 0,
@@ -70,5 +70,48 @@ describe("deriveLayers", () => {
     expect(LAYER_ORDER).toEqual([
       "hvacUnsplit", "heat", "cool", "hotWater", "hvacOther", "car", "lights", "appliances", "rest",
     ]);
+  });
+});
+
+describe("combinePeriodEnergy", () => {
+  const modeSums = {
+    energy_heat_kwh: 10,
+    energy_cool_kwh: 1,
+    energy_hot_water_kwh: 5,
+    energy_idle_kwh: 2,
+    energy_ambiguous_kwh: 0.5,
+  };
+
+  it("puts the pre-split side's HVAC in preSplitHvacKwh and adds the rest", () => {
+    const e = combinePeriodEnergy({
+      pre: [
+        { category: "HVAC", kwh: 40 },
+        { category: "Car", kwh: 3 },
+        { category: "Unmonitored", kwh: 2 },
+      ],
+      post: [
+        { category: "HVAC", kwh: 260 },
+        { category: "Car", kwh: 7 },
+        { category: "Heating", kwh: 99, parent: "HVAC" },
+      ],
+      modeSums,
+      bathKwh: 4,
+    });
+    expect(e.preSplitHvacKwh).toBe(40);
+    expect(e.categories).toEqual({ HVAC: 260, Car: 10, Unmonitored: 2 });
+    expect(e.modes).toEqual({ heat: 10, cool: 1, hotWater: 5, idle: 2, ambiguous: 0.5 });
+    expect(e.bathKwh).toBe(4);
+  });
+
+  it("handles a wholly pre-split period", () => {
+    const e = combinePeriodEnergy({
+      pre: [{ category: "HVAC", kwh: 400 }, { category: "Lights", kwh: 9 }],
+      post: null,
+      modeSums: {},
+      bathKwh: 0,
+    });
+    expect(e.preSplitHvacKwh).toBe(400);
+    expect(e.categories).toEqual({ Lights: 9 });
+    expect(e.modes).toEqual({ heat: 0, cool: 0, hotWater: 0, idle: 0, ambiguous: 0 });
   });
 });

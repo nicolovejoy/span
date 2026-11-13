@@ -9,8 +9,9 @@ export type TrendGrain = "week" | "month" | "year";
 
 export const TREND_GRAINS: readonly TrendGrain[] = ["month", "week", "year"];
 
-/** First Pacific day with collector data. */
-export const DATA_START_MS = pacificMidnightUtc(2025, 12, 26);
+/** First Pacific day with collector data: raw `circuit` and `panel` both
+ *  begin 2026-01-04T05:29Z (Jan 3, 9:29pm Pacific). */
+export const DATA_START_MS = pacificMidnightUtc(2026, 1, 3);
 /** First Pacific day of the hvac_mode timeline (heat/cool/hot-water split). */
 export const HVAC_SPLIT_START_MS = pacificMidnightUtc(2026, 1, 4);
 

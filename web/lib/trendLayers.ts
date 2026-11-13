@@ -74,3 +74,35 @@ export function deriveLayers(e: PeriodEnergy): TrendLayers {
     residualKwh: hvac - (heat + cool + hotWater + idle + ambiguous),
   };
 }
+
+type Row = { category: string; kwh: number; parent?: string };
+
+/** Merge the two sides of a period cut at HVAC_SPLIT_START_MS (either may be
+ *  null when the period lies wholly on one side). Only top-level rows count;
+ *  nested HVAC mode rows are ignored — modes come from `modeSums`, queried
+ *  over the split side only. */
+export function combinePeriodEnergy(p: {
+  pre: Row[] | null;
+  post: Row[] | null;
+  modeSums: Record<string, number>;
+  bathKwh: number;
+}): PeriodEnergy {
+  const categories: Record<string, number> = {};
+  let preSplitHvacKwh = 0;
+  const add = (rows: Row[] | null, side: "pre" | "post") => {
+    for (const r of rows ?? []) {
+      if (r.parent) continue;
+      if (side === "pre" && r.category === "HVAC") preSplitHvacKwh += r.kwh;
+      else categories[r.category] = (categories[r.category] ?? 0) + r.kwh;
+    }
+  };
+  add(p.pre, "pre");
+  add(p.post, "post");
+  const m = (f: string) => p.modeSums[`energy_${f}_kwh`] ?? 0;
+  return {
+    categories,
+    preSplitHvacKwh,
+    modes: { heat: m("heat"), cool: m("cool"), hotWater: m("hot_water"), idle: m("idle"), ambiguous: m("ambiguous") },
+    bathKwh: p.bathKwh,
+  };
+}
