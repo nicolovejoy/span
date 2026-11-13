@@ -6,7 +6,7 @@ const nowMs = Date.parse("2026-10-26T19:00:00-07:00");
 
 function full(key: string, grain: "week" | "month" | "year"): TrendPeriod {
   const b = parsePeriodKey(key, grain)!;
-  return { key, ...b, complete: true, partialStart: false };
+  return { key, ...b, calendarToMs: b.toMs, complete: true, partialStart: false };
 }
 
 describe("periodLabel", () => {

@@ -53,6 +53,11 @@ export const COPY = {
   total: "Total",
   bathsSubline: (baths: string) => `baths ${baths} · showers not detected yet`,
   partialFootnote: "* partial period",
+  projectedTag: "projected",
+  actualSoFar: "Actual so far",
+  projectedFootnote: (name: string, daysDone: string, daysTotal: string, actual: string) =>
+    `* ${name} is projected to the full period at the pace so far: ${actual} in ${daysDone} of ${daysTotal} days. Faded bar = projection, solid line = actual so far.`,
+  panelActualNote: "Actual so far, not projected.",
   loading: "Loading…",
   error: "Couldn't load trends. Try again shortly.",
   clearSelection: "Click a bar to rank one period; click it again to see the whole range.",
@@ -110,4 +115,10 @@ export const fmtKwh = (kwh: number) =>
   kwh >= 100 ? `${Math.round(kwh).toLocaleString("en-US")} kWh` : `${kwh.toFixed(1)} kWh`;
 export const fmtUsd = (usd: number) =>
   usd >= 100 ? `$${Math.round(usd).toLocaleString("en-US")}` : `$${usd.toFixed(2)}`;
+const DAY_MS = 86400_000;
+/** Day count for the projection footnote: whole when whole, else one decimal. */
+export const fmtDays = (ms: number) => {
+  const d = ms / DAY_MS;
+  return Math.abs(d - Math.round(d)) < 0.05 ? String(Math.round(d)) : d.toFixed(1);
+};
 export const fmtPct = (share: number) => `${Math.round(share * 100)}%`;

@@ -22,6 +22,8 @@ export type TrendPeriod = {
   key: string;
   fromMs: number;
   toMs: number;
+  /** The period's calendar end (toMs is clamped to now while in progress). */
+  calendarToMs: number;
   /** The period's calendar end has passed. */
   complete: boolean;
   /** fromMs was clamped up to DATA_START_MS. */
@@ -93,6 +95,20 @@ export function isSettled(p: TrendPeriod, nowMs: number): boolean {
   return p.complete && nowMs - p.toMs >= SETTLE_MS;
 }
 
+/** Below this much elapsed time a pace projection is noise (a single shower
+ *  would set the month), so the bar stays at its actual height. */
+const MIN_PROJECT_MS = 24 * 3600_000;
+
+/** Multiplier taking an in-progress period's energy to its full calendar
+ *  length at the pace so far (13 days into a 30-day month → 30/13). Null for a
+ *  finished period or one too young to project. */
+export function projectionFactor(p: TrendPeriod): number | null {
+  if (p.complete) return null;
+  const elapsed = p.toMs - p.fromMs;
+  if (elapsed < MIN_PROJECT_MS) return null;
+  return (p.calendarToMs - p.fromMs) / elapsed;
+}
+
 /** Bars oldest first. Week/month: up to 13 ending at the anchor. Year: every
  *  year since data start (endKey ignored). Periods wholly before data start
  *  are dropped; the first is clamped to DATA_START_MS, the last to now. */
@@ -110,6 +126,7 @@ export function trendPeriods(opts: {
       key: periodKey(b.fromMs, grain),
       fromMs: Math.max(b.fromMs, DATA_START_MS),
       toMs: Math.min(b.toMs, nowMs),
+      calendarToMs: b.toMs,
       complete: b.toMs <= nowMs,
       partialStart: b.fromMs < DATA_START_MS,
     });

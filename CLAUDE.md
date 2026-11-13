@@ -168,7 +168,10 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
   2026-11-13). The same runs below 58°F are labelled heat today. The Control circuit itself
   sits at ~45 W or ~107 W and has been at 107 W nearly continuously since late Sept 2026
   (was 45 W whenever the compressor idled through June); cause unknown, mechanical contractor
-  visited ~2026-10-05. Periods cache 24h only once 3h past their end. Spec
+  visited ~2026-10-05. An in-progress period's bar is drawn at its projected full-period size (energy × calendar
+  length ÷ elapsed, `projectionFactor` in `lib/trends.ts`; none under 1 day elapsed): faded with a
+  dashed outline, a solid line at actual-so-far, and a footnote; the Where-it-went panel stays
+  actual (2026-11-13). Periods cache 24h only once 3h past their end. Spec
   `docs/superpowers/specs/2026-10-26-trends-view-design.md`.
 - Auto-coarsen interval picks bucket size to stay ≤175 points across the range
 - Tests: `cd web && npm test` (vitest) — unit tests for the cache + intent-URL logic. Chart/React wiring is manual-verify.

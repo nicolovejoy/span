@@ -5,6 +5,7 @@ import {
   isSettled,
   parsePeriodKey,
   periodKey,
+  projectionFactor,
   shiftEndKey,
   trendPeriods,
 } from "./trends";
@@ -158,5 +159,23 @@ describe("isSettled (review fix)", () => {
     expect(isSettled(jan, jan.toMs + 4 * HOUR)).toBe(true);
     const ps = trendPeriods({ grain: "month", nowMs });
     expect(isSettled(ps[ps.length - 1], nowMs)).toBe(false);
+  });
+});
+
+describe("projectionFactor", () => {
+  const now = Date.parse("2026-11-14T00:00:00-08:00"); // 13 days into November
+  const ps = trendPeriods({ grain: "month", nowMs: now });
+
+  it("scales the in-progress month to its full length", () => {
+    expect(projectionFactor(ps[ps.length - 1])).toBeCloseTo(721 / 313, 6); // hours: the Nov 1 DST fall-back adds one to both
+  });
+
+  it("leaves finished periods alone", () => {
+    expect(projectionFactor(ps[ps.length - 2])).toBeNull();
+  });
+
+  it("does not project from under a day of data", () => {
+    const early = trendPeriods({ grain: "month", nowMs: Date.parse("2026-11-01T06:00:00-07:00") });
+    expect(projectionFactor(early[early.length - 1])).toBeNull();
   });
 });

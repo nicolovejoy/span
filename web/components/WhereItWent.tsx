@@ -1,7 +1,7 @@
 "use client";
 
 import type { TrendBar } from "@/lib/trendsPayload";
-import type { TrendGrain } from "@/lib/trends";
+import { projectionFactor, type TrendGrain } from "@/lib/trends";
 import { panelRows, type PanelKey, type TrendUnit } from "@/lib/whereItWent";
 import {
   COPY,
@@ -55,6 +55,9 @@ export function WhereItWent({
         {COPY.whereItWent} · {label}
       </h2>
       <div className="text-2xl font-semibold tabular-nums">{fmt(totalValue)}</div>
+      {ranked.some((p) => projectionFactor(p) !== null) && (
+        <div className="text-xs text-zinc-500">{COPY.panelActualNote}</div>
+      )}
       <ul className="flex flex-col gap-1.5 text-sm">
         {rows.map((r) => (
           <li key={r.key} className="flex flex-col">

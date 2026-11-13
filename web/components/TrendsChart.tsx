@@ -6,13 +6,14 @@
 import { useEffect, useRef, useState } from "react";
 import { LAYER_ORDER, type LayerKey } from "@/lib/trendLayers";
 import type { TrendBar } from "@/lib/trendsPayload";
-import type { TrendGrain } from "@/lib/trends";
+import { projectionFactor, type TrendGrain } from "@/lib/trends";
 import { costForKwh, proratedBaseCharge } from "@/lib/rates";
 import type { TrendUnit } from "@/lib/whereItWent";
 import {
   COPY,
   LAYER_LABELS,
   PANEL_LABELS,
+  fmtDays,
   fmtKwh,
   fmtUsd,
   periodLabel,
@@ -74,13 +75,16 @@ export function TrendsChart({
     unit === "usd" ? `$${Math.round(n)}` : n >= 1000 ? `${n / 1000}k` : String(Math.round(n));
 
   const present = LAYER_ORDER.filter((k) => periods.some((p) => p.layers[k] > 0));
-  const yMax = niceMax(Math.max(0, ...periods.map((p) => v(p.layers.totalKwh))));
+  // An in-progress period is drawn at its projected full-period size.
+  const scale = (p: TrendBar) => projectionFactor(p) ?? 1;
+  const yMax = niceMax(Math.max(0, ...periods.map((p) => v(p.layers.totalKwh) * scale(p))));
   const plotW = width - PAD.left - PAD.right;
   const plotH = HEIGHT - PAD.top - PAD.bottom;
   const band = periods.length ? plotW / periods.length : plotW;
   const barW = Math.min(56, band * 0.68);
   const y = (val: number) => PAD.top + plotH - (val / yMax) * plotH;
-  const anyPartial = periods.some((p) => !p.complete || p.partialStart);
+  const anyPartial = periods.some((p) => p.partialStart || (!p.complete && projectionFactor(p) === null));
+  const projected = periods.filter((p) => projectionFactor(p) !== null);
 
   const hovered = hover !== null ? periods[hover] : null;
 
@@ -133,8 +137,11 @@ export function TrendsChart({
 
           {periods.map((p, i) => {
             const x = PAD.left + band * i + (band - barW) / 2;
-            const total = v(p.layers.totalKwh);
+            const k = scale(p);
+            const isProjected = k !== 1;
+            const total = v(p.layers.totalKwh) * k;
             const top = y(total);
+            const barPath = topRoundedRect(x, top, barW, Math.max(0, y(0) - top), RADIUS);
             const dim = selKey !== null && selKey !== p.key;
             let acc = 0;
             const clipId = `trend-clip-${i}`;
@@ -147,11 +154,11 @@ export function TrendsChart({
                 onClick={() => onSelect(selKey === p.key ? null : p.key)}
               >
                 <clipPath id={clipId}>
-                  <path d={topRoundedRect(x, top, barW, Math.max(0, y(0) - top), RADIUS)} />
+                  <path d={barPath} />
                 </clipPath>
-                <g clipPath={`url(#${clipId})`}>
+                <g clipPath={`url(#${clipId})`} opacity={isProjected ? 0.45 : 1}>
                   {LAYER_ORDER.map((k) => {
-                    const val = v(p.layers[k]);
+                    const val = v(p.layers[k]) * scale(p);
                     if (val <= 0) return null;
                     const y0 = y(acc);
                     acc += val;
@@ -163,6 +170,20 @@ export function TrendsChart({
                     return <rect key={k} x={x} y={y1 + gap} width={barW} height={h} fill={layerFill(k)} />;
                   })}
                 </g>
+{isProjected && (
+                  <>
+                    <path d={barPath} fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="4 3" className="text-zinc-500" />
+                    <line
+                      x1={x - 3}
+                      x2={x + barW + 3}
+                      y1={y(v(p.layers.totalKwh))}
+                      y2={y(v(p.layers.totalKwh))}
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      className="text-zinc-900 dark:text-zinc-100"
+                    />
+                  </>
+                )}
                 {/* Hit target: the whole band, taller than the bar. */}
                 <rect x={PAD.left + band * i} y={PAD.top} width={band} height={plotH} fill="transparent" />
                 <text
@@ -187,7 +208,10 @@ export function TrendsChart({
               top: 4,
             }}
           >
-            <div className="mb-1 font-semibold">{periodLabel(hovered, grain)}</div>
+            <div className="mb-1 font-semibold">
+              {periodLabel(hovered, grain)}
+              {scale(hovered) !== 1 && <span className="font-normal text-zinc-500"> · {COPY.projectedTag}</span>}
+            </div>
             <table className="w-full">
               <tbody>
                 {[...LAYER_ORDER].reverse().map((k) =>
@@ -197,7 +221,7 @@ export function TrendsChart({
                         <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: k === "hvacOther" ? "var(--trend-hvacOther-hatch)" : `var(--trend-${k})` }} />
                         {LAYER_LABELS[k]}
                       </td>
-                      <td className="whitespace-nowrap text-right tabular-nums">{fmt(v(hovered.layers[k]))}</td>
+                      <td className="whitespace-nowrap text-right tabular-nums">{fmt(v(hovered.layers[k]) * scale(hovered))}</td>
                     </tr>
                   ) : null,
                 )}
@@ -205,7 +229,7 @@ export function TrendsChart({
                   <tr>
                     <td className="pr-2 text-zinc-500">{PANEL_LABELS.baseCharge}</td>
                     <td className="whitespace-nowrap text-right tabular-nums">
-                      {fmt(proratedBaseCharge(hovered.toMs - hovered.fromMs))}
+                      {fmt(proratedBaseCharge(hovered.toMs - hovered.fromMs) * scale(hovered))}
                     </td>
                   </tr>
                 )}
@@ -213,16 +237,38 @@ export function TrendsChart({
                   <td className="pt-1">{COPY.total}</td>
                   <td className="whitespace-nowrap pt-1 text-right tabular-nums">
                     {fmt(
-                      v(hovered.layers.totalKwh) +
-                        (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0),
+                      (v(hovered.layers.totalKwh) +
+                        (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0)) *
+                        scale(hovered),
                     )}
                   </td>
                 </tr>
+                {scale(hovered) !== 1 && (
+                  <tr className="text-zinc-500">
+                    <td className="pr-2">{COPY.actualSoFar}</td>
+                    <td className="whitespace-nowrap text-right tabular-nums">
+                      {fmt(
+                        v(hovered.layers.totalKwh) +
+                          (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0),
+                      )}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         )}
       </div>
+      {projected.map((p) => (
+        <div key={p.key} className="text-[11px] text-zinc-500">
+          {COPY.projectedFootnote(
+            tickLabel(p, grain),
+            fmtDays(p.toMs - p.fromMs),
+            fmtDays(p.calendarToMs - p.fromMs),
+            fmt(v(p.layers.totalKwh)),
+          )}
+        </div>
+      ))}
       {anyPartial && <div className="text-[11px] text-zinc-500">{COPY.partialFootnote}</div>}
     </div>
   );

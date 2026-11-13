@@ -9,6 +9,7 @@ function bar(key: string, cats: Record<string, number>, pre = 0): TrendBar {
     key,
     fromMs: 0,
     toMs: 30 * DAY,
+    calendarToMs: 30 * DAY,
     complete: true,
     partialStart: false,
     layers: deriveLayers({
