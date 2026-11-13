@@ -162,10 +162,19 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
   by 10–25%" was that Control circuit (33–78 kWh/month), not a metering gap — for the two
   classified circuits counter, power integral and `hvac_mode` agree within 0.3% every month.
   What is left as Unclassified is the classifier's `ambiguous` label (58–68°F outdoor band,
-  27–75 kWh/month Apr–Oct): ~53% short isolated runs (≤25 min, peak ≥1.5 kW), ~17% edges of
-  hot-water runs. Nico suspects the short runs are tank reheats after on-demand recirc cycles;
-  recirc events were requested from home-assistant (`~/src/.handoff/home-assistant-span.md`,
-  2026-11-13). The same runs below 58°F are labelled heat today. The Control circuit itself
+  27–75 kWh/month Apr–Oct): ~53% short isolated runs (≤25 min, peak ≥1.5 kW), ~17% touching
+  hot-water runs. Since 2026-11-13 `hvac_modes._extend_hot_water_edges` labels the one partial
+  interval at each end of a reheat as hot water (only when the interval beyond is idle); the
+  backfill moved ~104 kWh to hot water (72 from heat, 22 ambiguous, 11 cool) and
+  `attribution.bath_events` judges a run's DHW-shaped core, so baths are unchanged (170). Recirc was tested against 10 days of home-assistant history (37 cycles, 11-03 → 11-13,
+  `~/src/.handoff/home-assistant-span.md`): short runs are not recirc (26% near a cycle vs 18%
+  by chance; they recur ~every 2h round the clock, which Nico reads as overnight space heating);
+  longer runs may be (11 of 17). Untestable for the 58–68°F band until spring; an ongoing
+  recirc feed (HA Influx push, bucket-scoped write token) is agreed but not built. Dishwasher
+  (own circuit, 81 runs since April, ~1.0 kWh each) shows no hot-water effect: heat-pump energy
+  in the 3h after a start matches control days within 0.1 kWh. The washer is on the subpanel and
+  shows in `feedthrough_power_w` only as jitter (30s samples swinging 0–750 W around an
+  unchanged ~250 W mean, seen 2026-11-13 from 12:30 Pacific), not as a rise in the mean. The same runs below 58°F are labelled heat today. The Control circuit itself
   sits at ~45 W or ~107 W and has been at 107 W nearly continuously since late Sept 2026
   (was 45 W whenever the compressor idled through June); cause unknown, mechanical contractor
   visited ~2026-10-05. An in-progress period's bar is drawn at its projected full-period size (energy × calendar
