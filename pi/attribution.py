@@ -5,7 +5,7 @@ An event detector is a predicate over runs. One ships today (bath);
 shower / laundry hot-water predicates are future one-liners here (#14/#17)."""
 from datetime import timedelta
 
-from hvac_modes import INTERVAL_MINUTES
+from hvac_modes import DHW_MEAN_POWER_MIN_W, INTERVAL_MINUTES
 from rates import cost_for_kwh
 
 BATH_MIN_MINUTES = 25          # Phase 0 backtest-calibrated; see
@@ -42,18 +42,34 @@ def runs(intervals: list[dict], mode: str) -> list[list[dict]]:
     return out
 
 
+def _core(run: list[dict]) -> list[dict]:
+    """A hot_water run without its edge fragments: at most one interval per
+    end, dropped when its mean power is below the DHW shape floor."""
+    lo, hi = 0, len(run)
+    if hi - lo > 1 and run[lo]["hp_mean_w"] < DHW_MEAN_POWER_MIN_W:
+        lo += 1
+    if hi - lo > 1 and run[hi - 1]["hp_mean_w"] < DHW_MEAN_POWER_MIN_W:
+        hi -= 1
+    return run[lo:hi]
+
+
 def bath_events(intervals: list[dict]) -> list[dict]:
     """hot_water runs meeting duration + power bounds, shaped exactly like
     bath_detector's historical event dicts so write_bath_event and the ±2h
     dedup keep working unchanged."""
     events = []
     for run in runs(intervals, "hot_water"):
-        duration_min = len(run) * INTERVAL_MINUTES
-        hp_mean = sum(i["hp_mean_w"] for i in run) / len(run)
-        energy_kwh = sum(i["energy_kwh"] for i in run)
+        # The bath bounds were calibrated on the DHW-shaped core of a run.
+        # hvac_modes now also labels the partial interval at each end as
+        # hot_water (2026-11-13); judging the predicate on the whole run would
+        # let those low-power fragments drag the mean under the bath floor.
+        core = _core(run)
+        duration_min = len(core) * INTERVAL_MINUTES
+        hp_mean = sum(i["hp_mean_w"] for i in core) / len(core)
         if (duration_min < BATH_MIN_MINUTES or hp_mean < BATH_MEAN_POWER_MIN_W
-                or energy_kwh < BATH_MIN_KWH):
+                or sum(i["energy_kwh"] for i in core) < BATH_MIN_KWH):
             continue
+        energy_kwh = sum(i["energy_kwh"] for i in run)
         start = run[0]["start"]
         end = run[-1]["start"] + timedelta(minutes=INTERVAL_MINUTES)
         aux_mean = sum(i["aux_mean_w"] for i in run) / len(run)

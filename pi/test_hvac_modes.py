@@ -132,6 +132,36 @@ class ClassifyTest(unittest.TestCase):
                              ["idle"] * 2 + ["hot_water"] * 6 + ["idle"] * 2,
                              f"month={month}")
 
+    def test_partial_edge_intervals_join_their_hot_water_run(self):
+        # ramp-up and tail fragments (too little mean power to be DHW-shaped)
+        # framed by idle -> part of the reheat, not ambiguous
+        run = (series(utc(2026, 4, 10, 3, 0), 1, hp_mean=10.0)
+               + series(utc(2026, 4, 10, 3, 5), 1, hp_mean=900.0, duty=0.4)
+               + series(utc(2026, 4, 10, 3, 10), 4, hp_mean=3200.0)
+               + series(utc(2026, 4, 10, 3, 30), 1, hp_mean=600.0, duty=0.3)
+               + series(utc(2026, 4, 10, 3, 35), 1, hp_mean=10.0))
+        out = hm.classify(run, MILD)
+        self.assertEqual([i["mode"] for i in out],
+                         ["idle"] + ["hot_water"] * 6 + ["idle"])
+
+    def test_edge_is_not_absorbed_when_activity_continues_beyond_it(self):
+        # reheat followed directly by sustained low-power conditioning: the
+        # interval after the run is not the run's edge
+        run = (series(utc(2026, 4, 10, 3, 0), 1, hp_mean=10.0)
+               + series(utc(2026, 4, 10, 3, 5), 4, hp_mean=3200.0)
+               + series(utc(2026, 4, 10, 3, 25), 6, hp_mean=1200.0))
+        out = hm.classify(run, MILD)
+        self.assertEqual([i["mode"] for i in out],
+                         ["idle"] + ["hot_water"] * 4 + ["ambiguous"] * 6)
+
+    def test_edge_extension_does_not_rescue_a_too_short_run(self):
+        # a single DHW-shaped interval is still not a reheat, edges or not
+        run = (series(utc(2026, 4, 10, 3, 0), 1, hp_mean=900.0, duty=0.4)
+               + series(utc(2026, 4, 10, 3, 5), 1, hp_mean=3200.0)
+               + series(utc(2026, 4, 10, 3, 10), 1, hp_mean=600.0, duty=0.3))
+        out = hm.classify(run, MILD)
+        self.assertEqual({i["mode"] for i in out}, {"ambiguous"})
+
     def test_short_high_power_blip_is_not_hot_water(self):
         # one 5-min interval < DHW_RUN_MIN_MINUTES -> falls through to temp
         run = (series(utc(2026, 1, 10, 3, 0), 1, hp_mean=10.0)

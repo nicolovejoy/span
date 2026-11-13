@@ -75,6 +75,19 @@ class BathEventsTest(unittest.TestCase):
         self.assertAlmostEqual(ev["energy_kwh"], 6 * 3300 * 5 / 60 / 1000, places=6)
         self.assertGreater(ev["cost_dollars"], 0)
 
+    def test_edge_fragments_do_not_drag_a_bath_under_the_power_floor(self):
+        # 8 x 2500 W core framed by low-power edge fragments: whole-run mean is
+        # 2120 W (under the 2400 W floor), core mean is 2500 W -> still a bath,
+        # reported over the whole run
+        run = (series(utc(2026, 3, 1, 4, 0), 1, "hot_water", hp_mean=600.0)
+               + series(utc(2026, 3, 1, 4, 5), 8, "hot_water", hp_mean=2500.0)
+               + series(utc(2026, 3, 1, 4, 45), 1, "hot_water", hp_mean=600.0))
+        events = at.bath_events(run)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["start"], utc(2026, 3, 1, 4, 0))
+        self.assertEqual(events[0]["hp_mean_power_w"], 2500.0)
+        self.assertEqual(events[0]["duration_min"], 40.0)
+
     def test_short_run_is_not_a_bath(self):
         ivs = series(utc(2026, 1, 10, 3, 0), 4, "hot_water")   # 20 min < 25
         self.assertEqual(at.bath_events(ivs), [])

@@ -124,10 +124,43 @@ def _mark_hot_water(intervals: list[dict]) -> set[datetime]:
     return starts
 
 
+def _is_active(interval: dict | None) -> bool:
+    return (interval is not None
+            and interval["hp_mean_w"] + interval["aux_mean_w"] >= IDLE_POWER_W)
+
+
+def _extend_hot_water_edges(intervals: list[dict], hot_water: set[datetime]) -> set[datetime]:
+    """Attach a reheat's first and last fragment to its run.
+
+    A reheat rarely starts or stops on a 5-min boundary, so the interval on
+    either side of an accepted run holds a partial minute or two of the same
+    compressor run: too little mean power (or duty) to be DHW-shaped, so it
+    used to fall through to temperature -- `ambiguous` in mild weather, `heat`
+    in cold. Those fragments were ~17% of all ambiguous energy (2026-11-13).
+
+    One interval per side, and only when the interval beyond it is idle or
+    missing: that is what makes it the run's own edge. A reheat followed
+    directly by sustained space conditioning has an active interval beyond,
+    so nothing is absorbed from it."""
+    by_start = {i["start"]: i for i in intervals}
+    step = timedelta(minutes=INTERVAL_MINUTES)
+    extra: set[datetime] = set()
+    for start in hot_water:
+        for direction in (-1, 1):
+            edge = by_start.get(start + direction * step)
+            if edge is None or edge["start"] in hot_water or not _is_active(edge):
+                continue
+            if _is_active(by_start.get(edge["start"] + direction * step)):
+                continue
+            extra.add(edge["start"])
+    return hot_water | extra
+
+
 def classify(intervals: list[dict], weather_points: list[dict]) -> list[dict]:
-    """Label each interval with its mode. Stage 1: season-invariant DHW shape.
-    Stage 2: remaining active intervals split by outdoor temperature."""
-    hot_water = _mark_hot_water(intervals)
+    """Label each interval with its mode. Stage 1: season-invariant DHW shape,
+    plus each accepted run's edge fragments. Stage 2: remaining active
+    intervals split by outdoor temperature."""
+    hot_water = _extend_hot_water_edges(intervals, _mark_hot_water(intervals))
     out = []
     for i in intervals:
         total = i["hp_mean_w"] + i["aux_mean_w"]
