@@ -35,7 +35,7 @@ const wallParts = new Intl.DateTimeFormat("en-CA", {
 });
 
 /** Pacific wall-clock at `ms`, as calendar fields plus Monday-based weekday. */
-function pacificWall(ms: number) {
+export function pacificWall(ms: number) {
   const p: Record<string, string> = {};
   for (const { type, value } of wallParts.formatToParts(ms)) p[type] = value;
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -54,7 +54,7 @@ function pacificWall(ms: number) {
 /** UTC ms of Pacific midnight on calendar date (y, m, d). m is 1-based; d may
  *  be out of range (0, -3, 32…) — Date.UTC rolls it over, which is how the
  *  callers step to "yesterday" / "1st of last month" without date libraries. */
-function pacificMidnightUtc(y: number, m: number, d: number): number {
+export function pacificMidnightUtc(y: number, m: number, d: number): number {
   const target = Date.UTC(y, m - 1, d);
   // Guess UTC midnight, then correct by the zone offset observed at the guess;
   // twice, to converge when the correction crosses a DST transition.
@@ -69,7 +69,7 @@ function pacificMidnightUtc(y: number, m: number, d: number): number {
 /** [fromMs, toMs) of the calendar period of `grain` containing `anchorMs`,
  *  Pacific calendar. `toMs` is the start of the *next* period (exclusive) —
  *  the full period regardless of where `anchorMs` (or "now") falls inside it. */
-function periodBoundsFor(
+export function periodBounds(
   anchorMs: number,
   grain: ComparisonGrain,
 ): { fromMs: number; toMs: number } {
@@ -123,8 +123,8 @@ export function snapPeriod(
   previous: { fromMs: number; toMs: number };
 } {
   const effectiveAnchor = Math.min(anchorMs, nowMs) - 1;
-  const cur = periodBoundsFor(effectiveAnchor, grain);
-  const prev = periodBoundsFor(cur.fromMs - 1, grain);
+  const cur = periodBounds(effectiveAnchor, grain);
+  const prev = periodBounds(cur.fromMs - 1, grain);
   const complete = cur.toMs <= nowMs;
   if (complete) {
     return { fromMs: cur.fromMs, toMs: cur.toMs, complete: true, previous: prev };
@@ -143,7 +143,7 @@ export function snapPeriod(
  *  table label the comparison column from stamped data alone rather than
  *  re-snapping client-side with its own Date.now(). */
 export function previousPeriodStart(periodFromMs: number, grain: ComparisonGrain): number {
-  return periodBoundsFor(periodFromMs - 1, grain).fromMs;
+  return periodBounds(periodFromMs - 1, grain).fromMs;
 }
 
 const weekdayFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" });
