@@ -147,6 +147,19 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 - **Breakdown table** = real 30s `integral()` via `/api/energy` (`cachedQueryEnergyByCategory`), keyed by window only so changing the bucket doesn't refetch it.
 - **Breakdown table snaps to Pacific calendar periods (2026-08-28, decided over two design rounds):** the chart shows the exact zoom window, but the table describes the calendar day/week(Mon-start)/month/year nearest the view (grain from window length: ≤2d/≤14d/≤62d/else), anchored at the window's end — full period vs full prior period when historical, period-to-date vs same-elapsed-of-prior ("pace", clamped to the prior period's end) when it contains now. Headers name the period (`kWh · Aug 2026 · so far` / `vs Jul`). All pure logic + labels in `web/lib/energyWindow.ts` (`snapPeriod`, `periodLabel`, `computeDelta`), tested incl. DST + short-month clamp. Percent deltas are suppressed under a 1 kWh prior base — small denominators screamed (+137% on 1.3 kWh).
 - **Events layer (2026-09-05):** two SVG lanes under the chart (heat-pump `hvac_mode` runs; `bath_event` + `charge_event` spans) drawn inside `PowerChart` via lightweight-charts' `timeToCoordinate` plus a per-render affine time→x map from two resolved bucket anchors (`resolveAnchors` + `affineXOf`) so they track pan/zoom, plus an `EventList` under the breakdown table (rows follow the visible window, click zooms). Data from `/api/events?from&to` → `{ modes, events, modesTruncated }`; runs grouped server-side by `lib/eventRuns.ts` (pure, tested), layout in `lib/eventLanes.ts` (pure, tested). Mode runs are skipped beyond 62-day windows. `events=0` in the intent URL hides the layer; on by default. Spec: `docs/superpowers/specs/2026-09-05-explorer-events-layer-design.md`. Future de-clutter / drill-down pages: #25.
+- **`/trends` (2026-11-13):** stacked bars of energy by purpose per Pacific calendar period
+  (months default, weeks Monday-start, years) + a ranked "Where it went" panel; kWh/$ toggle.
+  Intent URL `/trends?grain=week&end=2026-10-19&sel=2026-10-12` (`grain` default month, `end` =
+  anchor period, `sel` = clicked bar; an old `sel` moves `end` to it so email deep links never
+  rot) — parse/build in `lib/trendsUrl.ts`. Periods in `lib/trends.ts` (13 bars ending at the
+  anchor; data starts **2026-01-03 Pacific** — raw `circuit`/`panel` begin 2026-01-04T05:29Z, not
+  the spec's 2025-12-26). `/api/trends` → `lib/trendsQuery.ts` reuses `cachedQueryEnergyByCategory`
+  per period (split at 2026-01-04 so pre-split HVAC is "HVAC (not split)") + `hvac_mode` field sums
+  + `bath_event` kWh; layers in `lib/trendLayers.ts`: Unclassified HVAC = HVAC counter − (heat +
+  cool + hot water + idle), clamped ≥0, so HVAC layers sum to the circuit total. **Known:** that
+  residual runs 10–25% of HVAC every month (counter > hvac_mode integral; logged as `[trends]`
+  warnings) — not investigated. Periods cache 24h only once 3h past their end. Spec
+  `docs/superpowers/specs/2026-10-26-trends-view-design.md`.
 - Auto-coarsen interval picks bucket size to stay ≤175 points across the range
 - Tests: `cd web && npm test` (vitest) — unit tests for the cache + intent-URL logic. Chart/React wiring is manual-verify.
 - Categories sourced from `pi/categories.json` (copied to `web/categories.generated.json` by `predev`/`prebuild` — Vercel builds use this normal `prebuild` sync; the Dockerfile's copy-in path is a Docker-era leftover, no longer used)
@@ -191,8 +204,8 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `panel_lifecycle` as "panel restarted" in the anomaly email. Spike findings
   `docs/superpowers/notes/2026-10-27-span-v2-spike-findings.md`; plan
   `docs/superpowers/plans/2026-10-28-collector-v2.md`.
-- **Trends view (`/trends`) — Part 1 (EV accuracy) SHIPPED 2026-10-27; Part 2 deferred behind
-  #26.** Spec `docs/superpowers/specs/2026-10-26-trends-view-design.md`, plan
+- **Trends view (`/trends`) — Part 1 (EV accuracy) SHIPPED 2026-10-27; Part 2 built 2026-11-13**
+  (branch `trends-view`; email deep links now have URLs to target — see § web/). Spec `docs/superpowers/specs/2026-10-26-trends-view-design.md`, plan
   `docs/superpowers/plans/2026-10-26-trends-view.md` (Tasks 3–9 remain). Part 1 outcome: the
   "October EV split" and the 3,052 kWh anomaly email were one panel-restart counter rebase, fixed
   in the rollup tasks; `charge_event` now covers ~99% of charger energy (was ~44%). Unmonitored
