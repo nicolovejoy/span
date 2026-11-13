@@ -169,8 +169,11 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
   `attribution.bath_events` judges a run's DHW-shaped core, so baths are unchanged (170). Recirc was tested against 10 days of home-assistant history (37 cycles, 11-03 → 11-13,
   `~/src/.handoff/home-assistant-span.md`): short runs are not recirc (26% near a cycle vs 18%
   by chance; they recur ~every 2h round the clock, which Nico reads as overnight space heating);
-  longer runs may be (11 of 17). Untestable for the 58–68°F band until spring; an ongoing
-  recirc feed (HA Influx push, bucket-scoped write token) is agreed but not built. Dishwasher
+  longer runs may be (11 of 17). Untestable for the 58–68°F band until spring. The ongoing
+  recirc feed has been live since 2026-11-13: HA's InfluxDB integration pushes every state change
+  into `span` as measurement `recirc` (tags `domain`, `entity_id` = `hot_water_pump` |
+  `hot_water_cycle`; fields `value` 1/0, `state` on/off), using the write-only token
+  `home-assistant-recirc`. Nothing in span reads it yet. Dishwasher
   (own circuit, 81 runs since April, ~1.0 kWh each) shows no hot-water effect: heat-pump energy
   in the 3h after a start matches control days within 0.1 kWh. The washer is on the subpanel and
   shows in `feedthrough_power_w` only as jitter (30s samples swinging 0–750 W around an
@@ -251,7 +254,8 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   population is measured, per the findings note); #3 cold-weather aux suppression; a recirc-pump
   analysis: the pump is run on demand (home-assistant's `switch.hot_water_pump` /
   `input_boolean.hot_water_cycle`, a 55-min burst cycle since 2026-09-23; it is not unplugged
-  any more), and span has no record of its runs until home-assistant supplies one.
+  any more); its runs land in the `recirc` measurement from 2026-11-13 (earlier history: the
+  10-day CSV in `~/src/.handoff/home-assistant-span.md`).
 - **#17 part 2 — dryer (then washer) detection**, off `panel.feedthrough_power_w`. Part 1
   ("Unmonitored" breakdown row) shipped 2026-08-23 (commit d3bb6a0) and reconciles live at ~11%
   share; part 2 is the next Phase 2 item and *does* need the sign/`abs()` handling part 1 deliberately
