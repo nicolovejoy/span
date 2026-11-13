@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DATA_START_MS,
   HVAC_SPLIT_START_MS,
+  isSettled,
   parsePeriodKey,
   periodKey,
   shiftEndKey,
@@ -130,8 +131,32 @@ describe("periodKey / parsePeriodKey", () => {
 
 describe("shiftEndKey", () => {
   it("moves by whole periods, clamped to the current one", () => {
-    expect(shiftEndKey("2026-10", "month", -13, nowMs)).toBe("2025-09");
+    expect(shiftEndKey("2026-10", "month", -13, nowMs)).toBe("2026-01");
     expect(shiftEndKey("2026-09", "month", 13, nowMs)).toBe("2026-10");
     expect(shiftEndKey("2026-10-26", "week", -13, nowMs)).toBe("2026-07-27");
+  });
+});
+
+describe("anchors before data start (review fix)", () => {
+  it("clamps an end before data start to the first data period", () => {
+    const ps = trendPeriods({ grain: "month", endKey: "2025-10", nowMs });
+    expect(ps.map((p) => p.key)).toEqual(["2026-01"]);
+    const ws = trendPeriods({ grain: "week", endKey: "2025-06-02", nowMs });
+    expect(ws.map((p) => p.key)).toEqual(["2025-12-29"]);
+  });
+
+  it("never shifts the anchor before the first data period", () => {
+    const now = Date.parse("2026-11-13T12:00:00-08:00");
+    expect(shiftEndKey("2026-11", "month", -13, now)).toBe("2026-01");
+  });
+});
+
+describe("isSettled (review fix)", () => {
+  it("treats a period as live until 3h after it ends", () => {
+    const [jan] = trendPeriods({ grain: "month", nowMs });
+    expect(isSettled(jan, jan.toMs + 2 * HOUR)).toBe(false);
+    expect(isSettled(jan, jan.toMs + 4 * HOUR)).toBe(true);
+    const ps = trendPeriods({ grain: "month", nowMs });
+    expect(isSettled(ps[ps.length - 1], nowMs)).toBe(false);
   });
 });

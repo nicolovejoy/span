@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { TrendsChart } from "./TrendsChart";
 import { WhereItWent } from "./WhereItWent";
-import { TREND_GRAINS, shiftEndKey, TREND_WINDOW, type TrendGrain } from "@/lib/trends";
+import { DATA_START_MS, TREND_GRAINS, shiftEndKey, TREND_WINDOW, type TrendGrain } from "@/lib/trends";
 import { buildTrendsSearch, type TrendsState } from "@/lib/trendsUrl";
 import type { TrendBar } from "@/lib/trendsPayload";
 import type { TrendUnit } from "@/lib/whereItWent";
@@ -18,12 +18,28 @@ const btn = (active: boolean) =>
       : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
   } disabled:opacity-40 disabled:hover:bg-transparent`;
 
-export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState; initialPeriods: TrendBar[] }) {
+/** Bars plus the grain they were fetched for — rendered together so a pending
+ *  or failed fetch never draws one grain's bars under another's labels. */
+type Shown = { grain: TrendGrain; periods: TrendBar[] };
+
+export function TrendsClient({
+  initial,
+  initialPeriods,
+}: {
+  initial: TrendsState;
+  /** null when the SSR query failed; the client retries on mount. */
+  initialPeriods: TrendBar[] | null;
+}) {
   const [state, setState] = useState(initial);
   const [unit, setUnit] = useState<TrendUnit>("kwh");
-  const cache = useRef(new Map([[viewKey(initial.grain, initial.endKey), initialPeriods]]));
-  const [periods, setPeriods] = useState(initialPeriods);
+  const cache = useRef(
+    new Map<string, TrendBar[]>(
+      initialPeriods ? [[viewKey(initial.grain, initial.endKey), initialPeriods]] : [],
+    ),
+  );
+  const [shown, setShown] = useState<Shown>({ grain: initial.grain, periods: initialPeriods ?? [] });
   const [status, setStatus] = useState<"ok" | "loading" | "error">("ok");
+  const periods = shown.periods;
 
   useEffect(() => {
     const qs = buildTrendsSearch(state);
@@ -34,7 +50,7 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
     const k = viewKey(state.grain, state.endKey);
     const hit = cache.current.get(k);
     if (hit) {
-      setPeriods(hit);
+      setShown({ grain: state.grain, periods: hit });
       setStatus("ok");
       return;
     }
@@ -46,7 +62,7 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
       .then((d: { periods: TrendBar[] }) => {
         cache.current.set(k, d.periods);
         if (!cancelled) {
-          setPeriods(d.periods);
+          setShown({ grain: state.grain, periods: d.periods });
           setStatus("ok");
         }
       })
@@ -56,6 +72,9 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
     };
   }, [state.grain, state.endKey]);
 
+  // Arrows act on what's on screen; disabled until the requested view loads.
+  const settled = status === "ok" && shown.grain === state.grain;
+  const atFirst = periods.length > 0 && periods[0].fromMs <= DATA_START_MS;
   const anchor = state.endKey ?? periods[periods.length - 1]?.key;
   const shift = (n: number) => {
     if (!anchor) return;
@@ -88,10 +107,10 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
         </div>
         {state.grain !== "year" && (
           <div className="flex gap-1">
-            <button className={btn(false)} onClick={() => shift(-TREND_WINDOW)}>
+            <button className={btn(false)} disabled={!settled || atFirst} onClick={() => shift(-TREND_WINDOW)}>
               {COPY.prev}
             </button>
-            <button className={btn(false)} disabled={state.endKey === null} onClick={() => shift(TREND_WINDOW)}>
+            <button className={btn(false)} disabled={!settled || state.endKey === null} onClick={() => shift(TREND_WINDOW)}>
               {COPY.next}
             </button>
           </div>
@@ -111,7 +130,7 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
         <div className="min-w-0 flex-1">
           <TrendsChart
             periods={periods}
-            grain={state.grain}
+            grain={shown.grain}
             unit={unit}
             selKey={state.selKey}
             onSelect={(selKey) => setState((s) => ({ ...s, selKey }))}
@@ -119,7 +138,7 @@ export function TrendsClient({ initial, initialPeriods }: { initial: TrendsState
           <p className="mt-2 text-xs text-zinc-500">{COPY.clearSelection}</p>
         </div>
         <div className="min-[760px]:w-80">
-          <WhereItWent periods={periods} selKey={state.selKey} unit={unit} grain={state.grain} />
+          <WhereItWent periods={periods} selKey={state.selKey} unit={unit} grain={shown.grain} />
         </div>
       </div>
     </main>

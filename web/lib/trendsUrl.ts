@@ -7,7 +7,9 @@ import { periodBounds } from "./energyWindow";
 import {
   DATA_START_MS,
   TREND_GRAINS,
+  firstDataBounds,
   parsePeriodKey,
+  periodKey,
   trendPeriods,
   type TrendGrain,
 } from "./trends";
@@ -27,6 +29,11 @@ export function parseTrendsState(params: Params, nowMs: number): TrendsState {
   const rawEnd = first(params.end);
   const end = rawEnd && grain !== "year" ? parsePeriodKey(rawEnd, grain) : null;
   let endKey = end && end.fromMs < current.fromMs ? rawEnd : null;
+  if (end && endKey && end.toMs <= DATA_START_MS) {
+    // Before any data: anchor at the first data period instead.
+    const first = firstDataBounds(grain);
+    endKey = first.fromMs < current.fromMs ? periodKey(first.fromMs, grain) : null;
+  }
 
   const rawSel = first(params.sel);
   const sel = rawSel ? parsePeriodKey(rawSel, grain) : null;

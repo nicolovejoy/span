@@ -72,12 +72,25 @@ export function parsePeriodKey(
 const prevBounds = (b: { fromMs: number }, grain: TrendGrain) =>
   periodBounds(b.fromMs - 1, grain);
 
-/** The anchor period: `endKey` if it parses and isn't after the current
- *  period, otherwise the period containing now. */
+/** The calendar period containing the first day of data. */
+export const firstDataBounds = (grain: TrendGrain) => periodBounds(DATA_START_MS, grain);
+
+/** The anchor period: `endKey` if it parses, clamped between the first data
+ *  period and the current one; otherwise the period containing now. */
 function anchorBounds(endKey: string | null | undefined, grain: TrendGrain, nowMs: number) {
   const current = periodBounds(nowMs, grain);
   const parsed = endKey ? parsePeriodKey(endKey, grain) : null;
-  return parsed && parsed.fromMs < current.fromMs ? parsed : current;
+  if (!parsed || parsed.fromMs >= current.fromMs) return current;
+  return parsed.toMs <= DATA_START_MS ? firstDataBounds(grain) : parsed;
+}
+
+/** Hours after a period ends before its numbers are trusted as final: the
+ *  hvac_mode classifier can lag ~75 min and self-heals nightly at 02:00. */
+const SETTLE_MS = 3 * 3600_000;
+
+/** Safe to cache long: the period ended at least SETTLE_MS ago. */
+export function isSettled(p: TrendPeriod, nowMs: number): boolean {
+  return p.complete && nowMs - p.toMs >= SETTLE_MS;
 }
 
 /** Bars oldest first. Week/month: up to 13 ending at the anchor. Year: every
@@ -106,7 +119,7 @@ export function trendPeriods(opts: {
 }
 
 /** Move an anchor key by `periods` (negative = back), never past the current
- *  period. For the prev/next arrows. */
+ *  period nor before the first data period. For the prev/next arrows. */
 export function shiftEndKey(
   endKey: string,
   grain: TrendGrain,
@@ -114,10 +127,12 @@ export function shiftEndKey(
   nowMs: number,
 ): string {
   const current = periodBounds(nowMs, grain);
+  const first = firstDataBounds(grain);
   let b = anchorBounds(endKey, grain, nowMs);
   for (let i = 0; i < Math.abs(periods); i++) {
     b = periods < 0 ? prevBounds(b, grain) : periodBounds(b.toMs, grain);
     if (b.fromMs >= current.fromMs) return periodKey(current.fromMs, grain);
+    if (b.fromMs <= first.fromMs) return periodKey(first.fromMs, grain);
   }
   return periodKey(b.fromMs, grain);
 }

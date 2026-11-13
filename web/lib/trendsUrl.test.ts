@@ -75,3 +75,10 @@ describe("buildTrendsSearch", () => {
     expect(buildTrendsSearch({ grain: "month", endKey: null, selKey: null })).toBe("");
   });
 });
+
+describe("end before data start (review fix)", () => {
+  it("normalizes to the first data period", () => {
+    expect(parseTrendsState({ end: "2025-06" }, later).endKey).toBe("2026-01");
+    expect(parseTrendsState({ grain: "week", end: "2025-06-02" }, nowMs).endKey).toBe("2025-12-29");
+  });
+});

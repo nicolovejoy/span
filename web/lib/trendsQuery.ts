@@ -4,7 +4,7 @@
 
 import { queryBathKwh, queryHvacModeFieldSums } from "./influx";
 import { cachedQueryEnergyByCategory, MAX_ENTRIES } from "./queryCache";
-import { HVAC_SPLIT_START_MS, type TrendPeriod } from "./trends";
+import { HVAC_SPLIT_START_MS, isSettled, type TrendPeriod } from "./trends";
 import { combinePeriodEnergy, type PeriodEnergy } from "./trendLayers";
 
 export async function queryPeriodEnergy(p: { fromMs: number; toMs: number }): Promise<PeriodEnergy> {
@@ -20,8 +20,8 @@ export async function queryPeriodEnergy(p: { fromMs: number; toMs: number }): Pr
   return combinePeriodEnergy({ pre, post, modeSums, bathKwh });
 }
 
-// Trend-period cache (/trends). A complete calendar period never changes →
-// 24h; the period still in progress → 60s. Keyed by the clamped bounds.
+// Trend-period cache (/trends). A settled period (ended 3h+ ago) never
+// changes → 24h; in progress or just ended → 60s. Keyed by the clamped bounds.
 const trendCache = new Map<string, { data: PeriodEnergy; expiresAt: number }>();
 const trendInflight = new Map<string, Promise<PeriodEnergy>>();
 
@@ -37,7 +37,7 @@ export async function cachedQueryTrendPeriod(p: TrendPeriod): Promise<PeriodEner
   const pending = trendInflight.get(key);
   if (pending) return pending;
 
-  const ttlMs = p.complete ? 24 * 60 * 60 * 1000 : 60_000;
+  const ttlMs = isSettled(p, now) ? 24 * 60 * 60 * 1000 : 60_000;
   const promise = queryPeriodEnergy(p)
     .then((data) => {
       trendCache.set(key, { data, expiresAt: Date.now() + ttlMs });
