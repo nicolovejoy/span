@@ -185,7 +185,7 @@ class HeadlineTest(unittest.TestCase):
     def test_top_mover_is_the_largest_absolute_category_swing_excluding_unmonitored(self):
         stats = dr.headline_stats(
             week_kwh=210.0, last_week_kwh=200.0, trailing12_avg_kwh=195.0,
-            trailing12mo_avg_kwh=190.0,
+            long_avg_week_kwh=190.0,
             week_cat={"HVAC": 80.0, "Lights": 20.0, "Unmonitored": 50.0},
             last_week_cat={"HVAC": 60.0, "Lights": 22.0, "Unmonitored": 10.0},
         )
@@ -193,7 +193,7 @@ class HeadlineTest(unittest.TestCase):
         self.assertEqual(stats["top_mover"], "HVAC")
         self.assertAlmostEqual(stats["top_mover_delta_kwh"], 20.0)
         self.assertAlmostEqual(stats["delta_vs_last_week_pct"], 5.0)
-        self.assertAlmostEqual(stats["delta_vs_12mo_pct"], (210.0 - 190.0) / 190.0 * 100)
+        self.assertAlmostEqual(stats["delta_vs_long_pct"], (210.0 - 190.0) / 190.0 * 100)
         self.assertAlmostEqual(stats["kwh"], 210.0)
 
     def test_no_movers_when_categories_are_empty(self):
@@ -206,7 +206,7 @@ class HeadlineTest(unittest.TestCase):
         # a meaningless "biggest mover was X (+0.0 kWh)".
         stats = dr.headline_stats(
             week_kwh=100.0, last_week_kwh=100.0, trailing12_avg_kwh=100.0,
-            trailing12mo_avg_kwh=100.0,
+            long_avg_week_kwh=100.0,
             week_cat={"HVAC": 50.0, "Lights": 20.0},
             last_week_cat={"HVAC": 50.0, "Lights": 20.0},
         )
@@ -214,7 +214,146 @@ class HeadlineTest(unittest.TestCase):
         self.assertEqual(stats["top_mover_delta_kwh"], 0.0)
 
 
+class BaselineHelpersTest(unittest.TestCase):
+    def test_data_days_skips_zero_filled_and_missing_days(self):
+        panel = {date(2026, 1, 1): 0.0, date(2026, 1, 2): 20.0, date(2026, 1, 4): 30.0}
+        self.assertEqual(dr.data_days(panel, date(2026, 1, 1), date(2026, 1, 5)),
+                         [date(2026, 1, 2), date(2026, 1, 4)])
+
+    def test_data_days_is_half_open(self):
+        panel = {date(2026, 1, 2): 20.0, date(2026, 1, 3): 20.0}
+        self.assertEqual(dr.data_days(panel, date(2026, 1, 2), date(2026, 1, 3)), [date(2026, 1, 2)])
+
+    def test_avg_week_is_mean_day_times_seven(self):
+        days = [date(2026, 1, 2), date(2026, 1, 4)]
+        self.assertAlmostEqual(dr.avg_week_kwh({days[0]: 20.0, days[1]: 30.0}, days), 175.0)
+        self.assertEqual(dr.avg_week_kwh({}, []), 0.0)
+
+    def test_pct_delta_honest_suppresses_small_bases(self):
+        self.assertIsNone(dr._pct_delta_honest(2.0, 0.9))
+        self.assertAlmostEqual(dr._pct_delta_honest(2.0, 1.0), 100.0)
+
+    def test_range_label(self):
+        self.assertEqual(dr.range_label(date(2025, 11, 3), date(2025, 11, 9)), "Nov 3–9, 2025")
+        self.assertEqual(dr.range_label(date(2025, 10, 20), date(2025, 11, 23)), "Oct 20–Nov 23, 2025")
+        self.assertEqual(dr.range_label(date(2025, 12, 29), date(2026, 1, 4)), "Dec 29, 2025–Jan 4, 2026")
+        self.assertEqual(dr.range_label(date(2026, 11, 1), date(2026, 11, 1)), "Nov 1, 2026")
+
+
+class YoyWindowsTest(unittest.TestCase):
+    WEEK = date(2026, 11, 2)            # Monday
+    LY = date(2025, 11, 3)              # the Monday 52 weeks earlier
+
+    def panel(self, lo, hi_exclusive):
+        return {lo + timedelta(days=i): 30.0 for i in range((hi_exclusive - lo).days)}
+
+    def test_last_years_week_is_52_weeks_back_on_the_same_weekdays(self):
+        win = dr.yoy_windows(self.panel(date(2025, 10, 1), date(2025, 12, 31)), self.WEEK)
+        lo, hi, days = win["week"]
+        self.assertEqual((lo, hi, len(days)), (self.LY, date(2025, 11, 9), 7))
+        self.assertEqual(lo.weekday(), 0)
+        lo, hi, days = win["centered"]
+        self.assertEqual((lo, hi, len(days)), (date(2025, 10, 20), date(2025, 11, 23), 35))
+
+    def test_none_without_last_years_data(self):
+        win = dr.yoy_windows(self.panel(date(2026, 1, 4), date(2026, 11, 9)), self.WEEK)
+        self.assertEqual(win, {"week": None, "centered": None})
+
+    def test_week_needs_all_seven_days(self):
+        panel = self.panel(date(2025, 10, 1), date(2025, 12, 31))
+        panel[date(2025, 11, 5)] = 0.0
+        win = dr.yoy_windows(panel, self.WEEK)
+        self.assertIsNone(win["week"])
+        self.assertEqual(len(win["centered"][2]), 34)   # centred tolerates a missing day
+
+    def test_a_week_starting_on_the_first_day_of_collection_does_not_count(self):
+        # Data begins on last year's Monday itself: that first day is partial.
+        win = dr.yoy_windows(self.panel(self.LY, date(2025, 12, 31)), self.WEEK)
+        self.assertIsNone(win["week"])
+
+    def test_centered_needs_28_of_35_days(self):
+        self.assertIsNone(dr.yoy_windows(self.panel(date(2025, 10, 28), date(2025, 12, 31)), self.WEEK)["centered"])
+
+
+class StackSeriesTest(unittest.TestCase):
+    CATS = ["Lights", "HVAC", "Car", "Appliances", "Else"]
+
+    def test_unmonitored_stacks_last_so_the_bar_reaches_the_panel_total(self):
+        series = dr.stack_series([{"HVAC": 5.0, "Lights": 2.0, "Unmonitored": 3.0}], self.CATS)
+        self.assertEqual([name for name, _ in series], ["Lights", "HVAC", "Unmonitored"])
+        self.assertAlmostEqual(sum(v[0] for _, v in series), 10.0)
+
+    def test_legend_lists_only_series_that_are_drawn(self):
+        series = dr.stack_series([{"HVAC": 5.0, "Car": 0.0}, {"HVAC": 1.0}], self.CATS)
+        self.assertEqual(series, [("HVAC", [5.0, 1.0])])
+
+    def test_negative_values_are_floored(self):
+        self.assertEqual(dr.stack_series([{"HVAC": -1.0}, {"HVAC": 2.0}], self.CATS),
+                         [("HVAC", [0.0, 2.0])])
+
+    def test_every_drawn_series_has_a_colour(self):
+        for cat in self.CATS + ["Unmonitored"]:
+            self.assertIn(cat, dr.CATEGORY_COLORS)
+        self.assertEqual(len(set(dr.CATEGORY_COLORS.values())), len(dr.CATEGORY_COLORS))
+
+
 class BuildWeeklyContextTest(unittest.TestCase):
+    def _build(self, rows, panel_daily, week_start):
+        with mock.patch.object(dr, "query_daily_circuit_counter_kwh", return_value=rows), \
+             mock.patch.object(dr, "query_daily_panel_kwh", return_value=list(panel_daily.items())):
+            return dr.build_weekly_context(object(), week_start)
+
+    def test_outdoor_temps_are_wired_for_this_week_and_last(self):
+        with mock.patch.object(dr, "query_mean_temp_f", side_effect=[49.2, 46.7]) as m:
+            ctx = self._build([], {}, date(2026, 11, 2))
+        self.assertEqual((ctx.temp_f, ctx.temp_f_prev), (49.2, 46.7))
+        # Pacific Mondays; the fall-back week (Oct 26–Nov 2) starts at 07:00Z, the next at 08:00Z
+        self.assertEqual(m.call_args_list[0].args[1:], ("2026-11-02T08:00:00Z", "2026-11-09T08:00:00Z"))
+        self.assertEqual(m.call_args_list[1].args[1:], ("2026-10-26T07:00:00Z", "2026-11-02T08:00:00Z"))
+
+    def test_weather_failure_omits_the_line_and_keeps_the_report(self):
+        with mock.patch.object(dr, "query_mean_temp_f", side_effect=RuntimeError("boom")):
+            ctx = self._build([], {}, date(2026, 11, 2))
+        self.assertIsNone(ctx.temp_f)
+
+    def test_long_run_baseline_is_an_average_week_over_days_with_data(self):
+        # 70 days of history at 10 kWh/day HVAC, 20 kWh/day panel; target week doubles both.
+        week = date(2026, 8, 3)
+        hist = [week - timedelta(days=i) for i in range(1, 71)]
+        this = [week + timedelta(days=i) for i in range(7)]
+        rows = [("Heat pump", d, 10.0) for d in hist] + [("Heat pump", d, 20.0) for d in this]
+        panel = {**{d: 20.0 for d in hist}, **{d: 40.0 for d in this}}
+        ctx = self._build(rows, panel, week)
+        self.assertEqual(ctx.long_weeks, 10)
+        # 280 kWh week vs a 140 kWh average week = +100%, not the old week-vs-month figure
+        self.assertAlmostEqual(ctx.headline["delta_vs_long_pct"], 100.0)
+        hvac = next(r for r in ctx.usage_rows if r["category"] == "HVAC")
+        self.assertAlmostEqual(hvac["delta_long_pct"], 100.0)
+        unmon = next(r for r in ctx.usage_rows if r["category"] == "Unmonitored")
+        self.assertAlmostEqual(unmon["delta_long_pct"], 100.0)
+        self.assertEqual(ctx.yoy, {"week": None, "centered": None})
+        self.assertIsNone(hvac["delta_yoy_pct"])
+
+    def test_chart_periods_include_unmonitored_and_sum_to_the_panel(self):
+        week = date(2026, 8, 3)
+        this = [week + timedelta(days=i) for i in range(7)]
+        ctx = self._build([("Heat pump", d, 20.0) for d in this], {d: 25.0 for d in this}, week)
+        self.assertAlmostEqual(ctx.week_by_day[0][1]["Unmonitored"], 5.0)
+        self.assertAlmostEqual(sum(ctx.trend[-1][1].values()), ctx.headline["kwh"])
+        self.assertAlmostEqual(ctx.month_trend[-1][1]["Unmonitored"], 35.0)
+
+    def test_yoy_fills_in_once_last_years_data_exists(self):
+        week = date(2026, 11, 2)
+        days = [date(2025, 10, 1) + timedelta(days=i) for i in range((date(2026, 11, 9) - date(2025, 10, 1)).days)]
+        kwh = lambda d: 40.0 if d >= week else 20.0
+        ctx = self._build([("Heat pump", d, kwh(d) / 2) for d in days], {d: kwh(d) for d in days}, week)
+        self.assertEqual(ctx.long_weeks, 52)
+        self.assertEqual((ctx.yoy["week"]["lo"], ctx.yoy["week"]["hi"]), (date(2025, 11, 3), date(2025, 11, 9)))
+        self.assertAlmostEqual(ctx.yoy["week"]["kwh"], 140.0)
+        self.assertAlmostEqual(ctx.yoy["centered"]["kwh"], 140.0)
+        hvac = next(r for r in ctx.usage_rows if r["category"] == "HVAC")
+        self.assertAlmostEqual(hvac["delta_yoy_pct"], 100.0)
+
     def test_wires_queries_into_a_consistent_context(self):
         rows = [
             ("Heat pump", date(2026, 8, 3), 10.0),
@@ -231,13 +370,13 @@ class BuildWeeklyContextTest(unittest.TestCase):
         hvac_row = next(r for r in ctx.usage_rows if r["category"] == "HVAC")
         self.assertAlmostEqual(hvac_row["kwh"], 10.0)
         self.assertAlmostEqual(hvac_row["delta_week_pct"], 25.0)  # 10 vs 8
-        self.assertIn("delta_12mo_pct", hvac_row)
+        self.assertIn("delta_long_pct", hvac_row)
         unmon_row = next(r for r in ctx.usage_rows if r["category"] == "Unmonitored")
         self.assertAlmostEqual(unmon_row["kwh"], 3.0)  # 15 - (10 + 2)
         self.assertEqual(len(ctx.week_by_day), 7)
         self.assertEqual(ctx.week_by_day[0][0], date(2026, 8, 3))
         self.assertAlmostEqual(ctx.headline["kwh"], 15.0)
-        self.assertIn("delta_vs_12mo_pct", ctx.headline)
+        self.assertIn("delta_vs_long_pct", ctx.headline)
         # 13 months: 12 trailing + the target week's calendar month (Aug 2026)
         self.assertEqual(len(ctx.month_trend), 13)
         self.assertEqual(ctx.month_trend[-1][0], date(2026, 8, 1))
@@ -251,10 +390,10 @@ class RenderTest(unittest.TestCase):
             week_start=date(2026, 8, 3), rows=[], panel_daily={}, day_cat={},
             categories=["Lights", "HVAC", "Car", "Appliances", "Else"],
             headline={"kwh": 210.0, "cost": 27.87, "delta_vs_last_week_pct": 5.0,
-                     "delta_vs_12wk_pct": 7.7, "delta_vs_12mo_pct": 12.1,
+                     "delta_vs_12wk_pct": 7.7, "delta_vs_long_pct": 12.1,
                      "top_mover": "HVAC", "top_mover_delta_kwh": 20.0},
             usage_rows=[{"category": "HVAC", "kwh": 80.0, "cost": 9.93,
-                        "delta_week_pct": 33.3, "delta_12wk_pct": 10.0, "delta_12mo_pct": 15.0,
+                        "delta_week_pct": 33.3, "delta_12wk_pct": 10.0, "delta_long_pct": 15.0,
                         "top_circuits": [("Heat pump", 75.0), ("Auxiliary", 5.0)]}],
             week_by_day=[(date(2026, 8, 3) + timedelta(days=i), {"HVAC": float(i)})
                         for i in range(7)],
@@ -292,14 +431,67 @@ class RenderTest(unittest.TestCase):
         self.assertIn("Heat pump", html)
         self.assertIn("Auxiliary", html)
 
-    def test_render_usage_table_shows_12mo_column(self):
-        html = dr.render_usage_table(self.make_ctx())
-        self.assertIn("vs 12-mo avg", html)
+    def test_usage_table_names_the_long_run_column_by_weeks_of_data(self):
+        self.assertIn("<th>vs 44-wk avg</th>", dr.render_usage_table(self.make_ctx(long_weeks=44)))
+        self.assertIn("<th>vs 52-wk avg</th>", dr.render_usage_table(self.make_ctx(long_weeks=52)))
+        self.assertNotIn("12-mo", dr.render_usage_table(self.make_ctx(long_weeks=44)))
+
+    def test_headline_names_the_long_run_baseline(self):
+        html = dr.render_headline(self.make_ctx(long_weeks=44))
+        self.assertIn("vs 44-wk avg", html)
+        self.assertNotIn("12-mo", html)
+
+    def test_yoy_is_absent_until_last_years_data_exists(self):
+        ctx = self.make_ctx()
+        self.assertEqual(dr.render_yoy_line(ctx), "")
+        self.assertNotIn("last year", dr.render_headline(ctx))
+        self.assertEqual(dr.render_usage_table(ctx).count("<th>"), 6)
+
+    def test_yoy_line_names_periods_and_leads_with_absolute_delta(self):
+        yoy = {"week": {"lo": date(2025, 8, 4), "hi": date(2025, 8, 10), "kwh": 200.0},
+               "centered": {"lo": date(2025, 7, 21), "hi": date(2025, 8, 24), "kwh": 180.0}}
+        html = dr.render_headline(self.make_ctx(yoy=yoy))
+        self.assertIn("Same week last year (Aug 4–10, 2025): 200.0 kWh, +10.0 kWh", html)
+        self.assertIn("Typical week around then (Jul 21–Aug 24, 2025): 180.0 kWh, +30.0 kWh", html)
+
+    def test_yoy_line_shows_only_the_window_that_has_data(self):
+        yoy = {"week": None,
+               "centered": {"lo": date(2025, 7, 21), "hi": date(2025, 8, 24), "kwh": 180.0}}
+        line = dr.render_yoy_line(self.make_ctx(yoy=yoy))
+        self.assertNotIn("Same week last year", line)
+        self.assertIn("Typical week around then", line)
+
+    def test_usage_table_gains_a_named_yoy_column_when_available(self):
+        yoy = {"week": {"lo": date(2025, 8, 4), "hi": date(2025, 8, 10), "kwh": 200.0},
+               "centered": None}
+        ctx = self.make_ctx(yoy=yoy)
+        ctx.usage_rows[0]["delta_yoy_pct"] = 25.0
+        html = dr.render_usage_table(ctx)
+        self.assertIn("<th>vs Aug 4–10, 2025</th>", html)
+        self.assertIn('colspan="7"', html)
+        self.assertIn("25%", html)
+
+    def test_outdoor_line_states_temperature_and_no_expectation(self):
+        line = dr.render_outdoor_line(self.make_ctx(temp_f=49.2, temp_f_prev=46.7))
+        self.assertIn("Outdoors: 49&deg;F average this week, 47&deg;F last week.", line)
+        self.assertNotIn("expected", line)
+        self.assertIn("Outdoors: 49&deg;F", dr.render_hvac_block(self.make_ctx(temp_f=49.2)))
+
+    def test_outdoor_line_absent_without_weather(self):
+        self.assertEqual(dr.render_outdoor_line(self.make_ctx()), "")
+        self.assertNotIn("last week.", dr.render_outdoor_line(self.make_ctx(temp_f=49.2)))
+
+    def test_hvac_block_names_both_month_to_date_periods(self):
+        html = dr.render_hvac_block(self.make_ctx(week_start=date(2026, 11, 2), day_cat={
+            date(2026, 11, 3): {"HVAC": 6.0}, date(2026, 10, 3): {"HVAC": 5.0}}))
+        self.assertIn("kWh Nov 1–8", html)
+        self.assertIn("vs Oct 1–8", html)
+        self.assertNotIn("last month", html)
 
     def test_render_usage_table_handles_no_baseline_gracefully(self):
         ctx = self.make_ctx(usage_rows=[{"category": "Car", "kwh": 0.0, "cost": 0.0,
                                         "delta_week_pct": None, "delta_12wk_pct": None,
-                                        "delta_12mo_pct": None, "top_circuits": []}])
+                                        "delta_long_pct": None, "top_circuits": []}])
         html = dr.render_usage_table(ctx)   # must not raise on None deltas
         self.assertIn("Car", html)
 
@@ -322,7 +514,7 @@ class RenderTest(unittest.TestCase):
     def test_usage_table_escapes_names_and_pads_nested_row(self):
         ctx = self.make_ctx(usage_rows=[{"category": "R&D <x>", "kwh": 1.0, "cost": 0.1,
                                         "delta_week_pct": None, "delta_12wk_pct": None,
-                                        "delta_12mo_pct": None,
+                                        "delta_long_pct": None,
                                         "top_circuits": [("A&B <c>", 1.0)]}])
         html = dr.render_usage_table(ctx)
         self.assertIn("R&amp;D &lt;x&gt;", html)
@@ -364,7 +556,7 @@ class HvacBlockTest(unittest.TestCase):
             week_start=date(2026, 8, 3), rows=[], panel_daily={}, day_cat=day_cat,
             categories=["Lights", "HVAC", "Car", "Appliances", "Else"],
             headline={"kwh": 0, "cost": 0, "delta_vs_last_week_pct": None,
-                     "delta_vs_12wk_pct": None, "delta_vs_12mo_pct": None,
+                     "delta_vs_12wk_pct": None, "delta_vs_long_pct": None,
                      "top_mover": None, "top_mover_delta_kwh": 0},
             usage_rows=[], week_by_day=[(date(2026, 8, 3) + timedelta(days=i),
                                        {"HVAC": float(i)}) for i in range(7)],

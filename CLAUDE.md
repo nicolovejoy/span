@@ -91,7 +91,18 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     `email_kit.py` (inlined styles, plain-text part, dark-mode wrapper; needs its Dockerfile COPY,
     present) for all four emails, dashboard deep links, a heat/cool/hot-water split in the weekly
     briefing and HVAC anomaly email (from `hvac_mode`), and anomaly emails that say NEW today or
-    Day N since …, backed by episode-start state. Pi deploy status not verified.
+    Day N since …, backed by episode-start state. Deployed to the Pi 2026-11-13 (the `daily-report`
+    container had not been rebuilt since 2026-09-10, so emails 11-06 → 11-13 went out in the old
+    format); first new-format send is the 2026-11-14 7am run, weekly briefing 2026-11-16.
+    Weekly briefing accuracy pass (2026-11-13): the long-run column is an average *week* over the
+    trailing 52 weeks of days with data, labelled by the weeks behind it ("vs 43-wk avg") — it used
+    to compare a week against an average *month*, so everything read about -70%. Chart legends sit
+    in one row above the plot in stack order, and bars include Unmonitored so they sum to the
+    headline. Year-over-year (same week last year + the five weeks centred on it) is built but
+    dormant until the data exists (first week: January 2027). The HVAC block states outdoor
+    temperature as context only: a weather-adjusted "expected kWh" was tested and rejected (weekly
+    heat kWh vs heating degree days, R² 0.62; similar-weather weeks differ ~4x, and January's
+    heat/hot-water split looks off — not investigated).
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
     `telemetry` bucket (#16)
@@ -193,7 +204,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `charge_event` is still to do. Open: a restart /
   firmware-change signal from the panel so the anomaly email says "panel restarted" instead of
   reporting usage (the v2 status endpoint has no uptime — fold into #26's spike).
-- **Pi test suite:** all green, 312 pass (2026-11-05). The 5 `test_weekly_report.py` failures were
+- **Pi test suite:** all green, 339 pass (2026-11-13). The 5 `test_weekly_report.py` failures were
   a stub-order bug, fixed by the shared matplotlib stub in `pi/conftest.py` (f00cba8). Run with
   `cd pi && uv run --python 3.11 --with pytest --with httpx --with influxdb-client --with tzdata
   --with matplotlib pytest -q`.
@@ -279,7 +290,7 @@ plain line in the template), then run `pi/render_env.sh` from the laptop. It ren
 that would be dropped/added and same/DIFFERS per key, asks before swapping, keeps `.env.bak`, and
 restarts nothing.
 
-<!-- SHARED-CONVENTIONS:BEGIN v=3308b16045f0 — auto-managed, do not edit here; source: prompt-lab/workflow/claude-md-shared.md (edit + re-sync) -->
+<!-- SHARED-CONVENTIONS:BEGIN v=c254cba18982 — auto-managed, do not edit here; source: prompt-lab/workflow/claude-md-shared.md (edit + re-sync) -->
 ## Shared conventions
 
 <!-- These are Nico's cross-repo output rules. They're materialized into each repo's
@@ -305,4 +316,6 @@ truth: prompt-lab/workflow/claude-md-shared.md — edit there and re-sync, never
 - **A review another agent must act on goes on the PR.** A review that another agent must act on, or that must outlive the session, is posted as a PR comment (`gh pr comment`), where the next session or agent finds it. Live, in-session reviews between Nico and the agent stay in chat. There is no devlog.md: the history DB is the one session record.
 
 - **Browser testing runs headless.** A headed browser takes focus on Nico's Mac. Run Playwright headless, with Edge (`channel: 'msedge'`) for desktop runs wherever a config picks a browser. Never use `headless: false`, `--headed`, `--debug`, `--ui` or `PWDEBUG` unless Nico asks for it in this session. For a visual check, take a screenshot or record a trace (`trace: 'on-first-retry'` or `'on'`) instead of opening a window. The Claude-in-Chrome extension is the one thing that drives Nico's real Chrome, on purpose.
+
+- **WebKit test runs record no frames on a Mac.** While the display is asleep, macOS WindowServer keeps every captured window buffer until a display wakes, and at 65,536 it aborts and ends the login session (2026-11-09; https://github.com/microsoft/playwright/issues/43066). Playwright's WebKit trace screenshots and video capture 25 times a second. In any config with a WebKit project, set `screenshots: false` on the trace for local runs (`trace: { mode: 'retain-on-failure', screenshots: false }`, any mode) and leave video off; CI on Linux may keep them. With that set, `--trace on` stays safe. Plain `page.screenshot` is fine, and Edge and Chromium are unaffected. Do not use `caffeinate -d` for this: it cannot wake a sleeping display and has no time limit around a command. Healthy reading: `ioclasscount IOSurface` between 400 and 900.
 <!-- SHARED-CONVENTIONS:END -->
