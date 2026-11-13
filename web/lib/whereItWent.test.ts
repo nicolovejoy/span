@@ -16,6 +16,7 @@ function bar(key: string, cats: Record<string, number>, pre = 0): TrendBar {
       preSplitHvacKwh: pre,
       modes: { heat: 50, cool: 0, hotWater: 20, idle: 5, ambiguous: 0 },
       bathKwh: 4,
+      controlsKwh: 0,
     }),
   };
 }

@@ -1,8 +1,14 @@
 // One period's energy → the /trends stack layers. Pure.
 // The HVAC layers always add up to the HVAC circuit total (counter-based):
-// "unclassified" absorbs `ambiguous` plus any disagreement between hvac_mode's
-// integral energy and the circuit counter. When modes exceed the circuit,
+// "controls" is the HVAC circuits the classifier never reads (the heat pump's
+// control circuit: controller, pumps); "unclassified" absorbs `ambiguous` plus
+// any disagreement between hvac_mode's integral energy and the classified
+// circuits' counter (under 1% in practice). When modes exceed the circuit,
 // unclassified clamps to 0 and residualKwh goes negative (logged upstream).
+
+/** The circuits pi/hvac_classifier.py reads (HP_CIRCUIT, AUX_CIRCUIT). Any
+ *  other circuit in the HVAC category has no hvac_mode energy. */
+export const HVAC_CLASSIFIED_CIRCUITS = ["Heat pump (HP)", "Auxiliary / Heat pump (HP)"];
 
 export type PeriodEnergy = {
   /** Top-level category kWh for the split part of the period, with the
@@ -12,6 +18,8 @@ export type PeriodEnergy = {
   preSplitHvacKwh: number;
   modes: { heat: number; cool: number; hotWater: number; idle: number; ambiguous: number };
   bathKwh: number;
+  /** kWh of HVAC-category circuits outside HVAC_CLASSIFIED_CIRCUITS (split side). */
+  controlsKwh: number;
 };
 
 export type TrendLayers = {
@@ -24,7 +32,7 @@ export type TrendLayers = {
   lights: number;
   appliances: number;
   rest: number;
-  detail: { standby: number; unclassified: number; bath: number; other: number; unmonitored: number };
+  detail: { standby: number; controls: number; unclassified: number; bath: number; other: number; unmonitored: number };
   totalKwh: number;
   residualKwh: number;
 };
@@ -47,7 +55,8 @@ export function deriveLayers(e: PeriodEnergy): TrendLayers {
   const c = (k: string) => e.categories[k] ?? 0;
   const hvac = c("HVAC");
   const { heat, cool, hotWater, idle, ambiguous } = e.modes;
-  const unclassified = Math.max(0, hvac - heat - cool - hotWater - idle);
+  const controls = Math.min(e.controlsKwh, hvac);
+  const unclassified = Math.max(0, hvac - controls - heat - cool - hotWater - idle);
   const other = c("Else");
   const unmonitored = c("Unmonitored");
   const layers = {
@@ -55,7 +64,7 @@ export function deriveLayers(e: PeriodEnergy): TrendLayers {
     heat,
     cool,
     hotWater,
-    hvacOther: idle + unclassified,
+    hvacOther: idle + controls + unclassified,
     car: c("Car"),
     lights: c("Lights"),
     appliances: c("Appliances"),
@@ -65,13 +74,14 @@ export function deriveLayers(e: PeriodEnergy): TrendLayers {
     ...layers,
     detail: {
       standby: idle,
+      controls,
       unclassified,
       bath: Math.min(e.bathKwh, hotWater),
       other,
       unmonitored,
     },
     totalKwh: LAYER_ORDER.reduce((s, k) => s + layers[k], 0),
-    residualKwh: hvac - (heat + cool + hotWater + idle + ambiguous),
+    residualKwh: hvac - controls - (heat + cool + hotWater + idle + ambiguous),
   };
 }
 
@@ -80,12 +90,14 @@ type Row = { category: string; kwh: number; parent?: string };
 /** Merge the two sides of a period cut at HVAC_SPLIT_START_MS (either may be
  *  null when the period lies wholly on one side). Only top-level rows count;
  *  nested HVAC mode rows are ignored — modes come from `modeSums`, queried
- *  over the split side only. */
+ *  over the split side only. `hvacCircuits` is the split side's HVAC category
+ *  drilled into circuits (row.category = circuit name). */
 export function combinePeriodEnergy(p: {
   pre: Row[] | null;
   post: Row[] | null;
   modeSums: Record<string, number>;
   bathKwh: number;
+  hvacCircuits?: Row[] | null;
 }): PeriodEnergy {
   const categories: Record<string, number> = {};
   let preSplitHvacKwh = 0;
@@ -104,5 +116,8 @@ export function combinePeriodEnergy(p: {
     preSplitHvacKwh,
     modes: { heat: m("heat"), cool: m("cool"), hotWater: m("hot_water"), idle: m("idle"), ambiguous: m("ambiguous") },
     bathKwh: p.bathKwh,
+    controlsKwh: (p.hvacCircuits ?? [])
+      .filter((r) => !HVAC_CLASSIFIED_CIRCUITS.includes(r.category))
+      .reduce((s, r) => s + r.kwh, 0),
   };
 }

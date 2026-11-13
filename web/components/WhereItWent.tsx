@@ -20,6 +20,7 @@ const ROW_FILL: Record<PanelKey, string> = {
   hotWater: "var(--trend-hotWater)",
   unclassified: "var(--trend-hvacOther-hatch)",
   standby: "var(--trend-hvacOther-hatch)",
+  controls: "var(--trend-hvacOther-hatch)",
   car: "var(--trend-car)",
   lights: "var(--trend-lights)",
   appliances: "var(--trend-appliances)",

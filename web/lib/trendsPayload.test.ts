@@ -8,6 +8,7 @@ const flat: PeriodEnergy = {
   preSplitHvacKwh: 0,
   modes: { heat: 50, cool: 0, hotWater: 20, idle: 5, ambiguous: 5 },
   bathKwh: 1,
+  controlsKwh: 0,
 };
 
 describe("trendsPayload", () => {

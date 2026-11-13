@@ -10,7 +10,7 @@ export type PanelKey = keyof typeof PANEL_LABELS;
 export type PanelRow = { key: PanelKey; kwh: number; value: number; share: number };
 
 const ORDER: Exclude<PanelKey, "baseCharge">[] = [
-  "hvacUnsplit", "heat", "cool", "hotWater", "unclassified", "standby",
+  "hvacUnsplit", "heat", "cool", "hotWater", "unclassified", "controls", "standby",
   "car", "lights", "appliances", "other", "unmonitored",
 ];
 
@@ -26,6 +26,7 @@ export function panelRows(periods: TrendBar[], unit: TrendUnit) {
     kwh.hotWater += l.hotWater;
     kwh.unclassified += l.detail.unclassified;
     kwh.standby += l.detail.standby;
+    kwh.controls += l.detail.controls;
     kwh.car += l.car;
     kwh.lights += l.lights;
     kwh.appliances += l.appliances;

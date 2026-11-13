@@ -155,10 +155,20 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
   anchor; data starts **2026-01-03 Pacific** — raw `circuit`/`panel` begin 2026-01-04T05:29Z, not
   the spec's 2025-12-26). `/api/trends` → `lib/trendsQuery.ts` reuses `cachedQueryEnergyByCategory`
   per period (split at 2026-01-04 so pre-split HVAC is "HVAC (not split)") + `hvac_mode` field sums
-  + `bath_event` kWh; layers in `lib/trendLayers.ts`: Unclassified HVAC = HVAC counter − (heat +
-  cool + hot water + idle), clamped ≥0, so HVAC layers sum to the circuit total. **Known:** that
-  residual runs 10–25% of HVAC every month (counter > hvac_mode integral; logged as `[trends]`
-  warnings) — not investigated. Periods cache 24h only once 3h past their end. Spec
+  + `bath_event` kWh; layers in `lib/trendLayers.ts`: HVAC controls & pumps = the HVAC-category circuits the
+  classifier never reads (today only `Heat pump (HP) / Control`, from the HVAC drill query);
+  Unclassified HVAC = HVAC counter − controls − (heat + cool + hot water + idle), clamped ≥0, so
+  HVAC layers sum to the circuit total. **Investigated 2026-11-13:** the old "counter > hvac_mode
+  by 10–25%" was that Control circuit (33–78 kWh/month), not a metering gap — for the two
+  classified circuits counter, power integral and `hvac_mode` agree within 0.3% every month.
+  What is left as Unclassified is the classifier's `ambiguous` label (58–68°F outdoor band,
+  27–75 kWh/month Apr–Oct): ~53% short isolated runs (≤25 min, peak ≥1.5 kW), ~17% edges of
+  hot-water runs. Nico suspects the short runs are tank reheats after on-demand recirc cycles;
+  recirc events were requested from home-assistant (`~/src/.handoff/home-assistant-span.md`,
+  2026-11-13). The same runs below 58°F are labelled heat today. The Control circuit itself
+  sits at ~45 W or ~107 W and has been at 107 W nearly continuously since late Sept 2026
+  (was 45 W whenever the compressor idled through June); cause unknown, mechanical contractor
+  visited ~2026-10-05. Periods cache 24h only once 3h past their end. Spec
   `docs/superpowers/specs/2026-10-26-trends-view-design.md`.
 - Auto-coarsen interval picks bucket size to stay ≤175 points across the range
 - Tests: `cd web && npm test` (vitest) — unit tests for the cache + intent-URL logic. Chart/React wiring is manual-verify.
@@ -225,8 +235,9 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   structural, see `notes/2026-08-26-hvac-phase0-findings.md`). Follow-ups now unblocked (pointers,
   not new scope): shower/laundry predicates as small additions to `attribution.py` (the shower
   population is measured, per the findings note); #3 cold-weather aux suppression; a recirc-pump
-  retro-analysis (unplugged 2026-04-09) readable from overnight `hot_water` energy in the
-  backfilled timeline.
+  analysis: the pump is run on demand (home-assistant's `switch.hot_water_pump` /
+  `input_boolean.hot_water_cycle`, a 55-min burst cycle since 2026-09-23; it is not unplugged
+  any more), and span has no record of its runs until home-assistant supplies one.
 - **#17 part 2 — dryer (then washer) detection**, off `panel.feedthrough_power_w`. Part 1
   ("Unmonitored" breakdown row) shipped 2026-08-23 (commit d3bb6a0) and reconciles live at ~11%
   share; part 2 is the next Phase 2 item and *does* need the sign/`abs()` handling part 1 deliberately

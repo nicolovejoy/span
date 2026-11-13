@@ -9,6 +9,7 @@ function energy(p: Partial<Omit<PeriodEnergy, "modes">> & { modes?: Partial<Peri
     preSplitHvacKwh: p.preSplitHvacKwh ?? 0,
     modes: { ...zeroModes, ...p.modes },
     bathKwh: p.bathKwh ?? 0,
+    controlsKwh: p.controlsKwh ?? 0,
   };
 }
 
@@ -31,6 +32,21 @@ describe("deriveLayers", () => {
     expect(l.detail.unmonitored).toBe(50);
     expect(l.totalKwh).toBe(300 + 180 + 40 + 60 + 70 + 50);
     expect(sumLayers(l)).toBe(l.totalKwh);
+  });
+
+  it("carves the unclassified circuits out as controls, leaving ambiguous as unclassified", () => {
+    const l = deriveLayers(
+      energy({
+        categories: { HVAC: 300 },
+        controlsKwh: 60,
+        modes: { heat: 100, cool: 0, hotWater: 100, idle: 10, ambiguous: 30 },
+      }),
+    );
+    expect(l.detail.controls).toBe(60);
+    expect(l.detail.unclassified).toBe(30);
+    expect(l.residualKwh).toBe(0);
+    expect(l.hvacOther).toBe(100);
+    expect(l.heat + l.cool + l.hotWater + l.hvacOther).toBe(300);
   });
 
   it("clamps unclassified at 0 when modes exceed the circuit", () => {
@@ -96,7 +112,13 @@ describe("combinePeriodEnergy", () => {
       ],
       modeSums,
       bathKwh: 4,
+      hvacCircuits: [
+        { category: "Heat pump (HP)", kwh: 230, parent: "HVAC" },
+        { category: "Auxiliary / Heat pump (HP)", kwh: 10, parent: "HVAC" },
+        { category: "Heat pump (HP) / Control", kwh: 20, parent: "HVAC" },
+      ],
     });
+    expect(e.controlsKwh).toBe(20);
     expect(e.preSplitHvacKwh).toBe(40);
     expect(e.categories).toEqual({ HVAC: 260, Car: 10, Unmonitored: 2 });
     expect(e.modes).toEqual({ heat: 10, cool: 1, hotWater: 5, idle: 2, ambiguous: 0.5 });

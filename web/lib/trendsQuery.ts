@@ -11,13 +11,14 @@ export async function queryPeriodEnergy(p: { fromMs: number; toMs: number }): Pr
   const cut = Math.min(Math.max(HVAC_SPLIT_START_MS, p.fromMs), p.toMs);
   const hasPre = cut > p.fromMs;
   const hasPost = p.toMs > cut;
-  const [pre, post, modeSums, bathKwh] = await Promise.all([
+  const [pre, post, modeSums, bathKwh, hvacCircuits] = await Promise.all([
     hasPre ? cachedQueryEnergyByCategory({ fromMs: p.fromMs, toMs: cut }) : null,
     hasPost ? cachedQueryEnergyByCategory({ fromMs: cut, toMs: p.toMs }) : null,
     hasPost ? queryHvacModeFieldSums(cut, p.toMs) : {},
     hasPost ? queryBathKwh(cut, p.toMs) : 0,
+    hasPost ? cachedQueryEnergyByCategory({ fromMs: cut, toMs: p.toMs, drill: "HVAC" }) : null,
   ]);
-  return combinePeriodEnergy({ pre, post, modeSums, bathKwh });
+  return combinePeriodEnergy({ pre, post, modeSums, bathKwh, hvacCircuits });
 }
 
 // Trend-period cache (/trends). A settled period (ended 3h+ ago) never
