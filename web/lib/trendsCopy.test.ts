@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { periodLabel, rangeLabel } from "./trendsCopy";
+import { COPY, periodLabel, rangeLabel } from "./trendsCopy";
 import { parsePeriodKey, trendPeriods, type TrendPeriod } from "./trends";
 
 const nowMs = Date.parse("2026-10-26T19:00:00-07:00");
@@ -48,5 +48,18 @@ describe("rangeLabel", () => {
 
   it("falls back to the single period's label", () => {
     expect(rangeLabel([full("2026-09", "month")], "month")).toBe("Sep 2026");
+  });
+});
+
+describe("COPY", () => {
+  it("words the projection footnote with house and car", () => {
+    expect(COPY.projectedFootnote("Nov", "13", "30", "512 kWh", "120 kWh")).toBe(
+      "* Nov is projected to the full period at the pace so far: house 512 kWh, car 120 kWh in 13 of 30 days. Faded bars = projection, solid lines = actual so far.",
+    );
+    expect(COPY.projectedFootnote("Nov", "13", "30", "512 kWh", null)).toContain("house 512 kWh in 13");
+  });
+
+  it("words the car line", () => {
+    expect(COPY.carLine("54.6 kWh", "$6.78")).toBe("Car charging: 54.6 kWh · $6.78. Not in the house figures.");
   });
 });

@@ -61,3 +61,6 @@ body.focus-mode main {
   max-width: none !important;
   gap: 0 !important;
 }
+body.focus-mode .explorer-grid {
+  display: block !important;
+}

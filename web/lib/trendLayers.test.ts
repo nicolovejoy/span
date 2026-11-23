@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LAYER_ORDER, combinePeriodEnergy, deriveLayers, type PeriodEnergy } from "./trendLayers";
+import { HOUSE_LAYER_ORDER, LAYER_ORDER, combinePeriodEnergy, deriveLayers, type PeriodEnergy } from "./trendLayers";
 
 const zeroModes = { heat: 0, cool: 0, hotWater: 0, idle: 0, ambiguous: 0 };
 
@@ -32,6 +32,24 @@ describe("deriveLayers", () => {
     expect(l.detail.unmonitored).toBe(50);
     expect(l.totalKwh).toBe(300 + 180 + 40 + 60 + 70 + 50);
     expect(sumLayers(l)).toBe(l.totalKwh);
+  });
+
+  it("gives a house total that excludes the car and matches the house layers", () => {
+    const l = deriveLayers(
+      energy({
+        categories: { HVAC: 300, Car: 180, Lights: 40, Appliances: 60, Else: 70, Unmonitored: 50 },
+        modes: { heat: 150, cool: 0, hotWater: 100, idle: 20, ambiguous: 25 },
+      }),
+    );
+    expect(l.houseKwh).toBe(300 + 40 + 60 + 70 + 50);
+    expect(HOUSE_LAYER_ORDER.reduce((s, k) => s + l[k], 0)).toBe(l.houseKwh);
+    expect(l.houseKwh + l.car).toBe(l.totalKwh);
+  });
+
+  it("orders the house layers bottom to top without the car", () => {
+    expect(HOUSE_LAYER_ORDER).toEqual([
+      "hvacUnsplit", "heat", "cool", "hotWater", "hvacOther", "lights", "appliances", "rest",
+    ]);
   });
 
   it("carves the unclassified circuits out as controls, leaving ambiguous as unclassified", () => {

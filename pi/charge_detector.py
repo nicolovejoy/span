@@ -23,7 +23,8 @@ INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "home")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "span")
 
-CIRCUIT_NAME = os.getenv("CHARGE_CIRCUIT", "Outdoor / Tesla Car Charger")
+from ev_circuit import CHARGE_CIRCUIT as CIRCUIT_NAME
+
 POWER_THRESHOLD = 1000  # watts
 MIN_DURATION_MIN = 30
 # Each loop iteration re-reads this much history and only writes sessions that

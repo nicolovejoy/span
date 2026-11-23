@@ -49,6 +49,7 @@ def _install_matplotlib_stub():
 
     _mpl_ticker = types.ModuleType("matplotlib.ticker")
     _mpl_ticker.StrMethodFormatter = lambda *a, **k: None
+    _mpl_ticker.FuncFormatter = lambda *a, **k: None
     _mpl.ticker = _mpl_ticker
     sys.modules["matplotlib.ticker"] = _mpl_ticker
 
