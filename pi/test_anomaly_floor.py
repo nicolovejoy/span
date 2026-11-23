@@ -203,5 +203,58 @@ class GenerateAnomalyCheckTest(unittest.TestCase):
         sent.assert_called_once()
 
 
+from email_kit import html_to_text  # noqa: E402
+
+
+class HvacEmailCopyTest(unittest.TestCase):
+    def _alert(self, **fixture_kw):
+        rows, hw, temps = rows_fixture(**fixture_kw)
+        v = verdicts(rows, hw, temps)["HVAC"]
+        return [("HVAC", v.value, v.baseline, v.result)], v.hvac
+
+    def test_weather_comparison_in_plain_words(self):
+        alerts, j = self._alert()
+        subject, html = dr.render_anomaly_email(T, alerts, {}, hvac=j)
+        text = html_to_text(html)
+        self.assertEqual(subject, "⚡ HVAC 13.0 kWh above expected ($1.61)")
+        self.assertIn("HVAC used 28.3 kWh, 13.0 kWh more than expected ($1.61).", text)
+        self.assertIn("16.8 kWh vs an average 10.8 kWh on 5 days at similar temperature "
+                      "(within 3°F of 43°F, last 60 days) — unusual.", text)
+        self.assertIn("Hot water: 11.5 kWh vs a normal 4.5 kWh for a Thursday — unusual.", text)
+        self.assertNotIn("for a Thursday (", text.split("Hot water")[0])
+
+    def test_weekday_fallback_wording(self):
+        alerts, j = self._alert(similar=((3, 10.0), (5, 11.0)))
+        _, html = dr.render_anomaly_email(T, alerts, {}, hvac=j)
+        self.assertIn("for a Thursday (too few days at similar temperature to compare)",
+                      html_to_text(html))
+
+    def test_normal_part_is_marked_not_counted(self):
+        # space within range, hot water huge: hot water alone over the floor
+        alerts, j = self._alert(target_space=10.8, target_hw=20.0)
+        self.assertTrue(j.result.is_anomalous)
+        _, html = dr.render_anomaly_email(T, alerts, {}, hvac=j)
+        self.assertIn("within the normal range, not counted", html_to_text(html))
+
+    def test_day_n_suffix_still_applies(self):
+        alerts, j = self._alert()
+        subject, _ = dr.render_anomaly_email(T, alerts, {}, hvac=j,
+                                             episode_since={"HVAC": T - timedelta(days=2)})
+        self.assertTrue(subject.endswith(" · day 3"), subject)
+
+    def test_without_judgement_copy_is_unchanged(self):
+        alerts, j = self._alert()
+        subject, html = dr.render_anomaly_email(T, alerts, {})
+        self.assertNotIn("expected", subject)
+        self.assertNotIn("similar temperature", html)
+
+    def test_generate_passes_the_judgement(self):
+        rows, hw, temps = rows_fixture()
+        _, _, _, sent = GenerateAnomalyCheckTest._run(GenerateAnomalyCheckTest(), rows, hw, temps)
+        html, subject = sent.call_args[0]
+        self.assertIn("days at similar temperature", html)
+        self.assertTrue(subject.startswith("⚡ HVAC 13.0 kWh above expected"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1475,16 +1475,47 @@ def evaluate_day(target_date: date, day_cat: dict[date, dict[str, float]],
     return out
 
 
+def _hvac_copy(target_date: date, value: float, age: str, hvac: "rb.HvacJudgement") -> str:
+    """The HVAC block's comparison paragraphs: the headline excess, then one line per
+    part saying what it was compared against and whether it counted."""
+    c = hvac.combined_kwh
+    usd = abs(c) * ENERGY_RATE
+    more = "more" if c > 0 else "less"
+    wd = target_date.strftime("%A")
+    out = [f"<p>{age}HVAC used {value:.1f} kWh, {abs(c):.1f} kWh {more} than expected (${usd:.2f}).</p>"]
+    for p in (hvac.space, hvac.hot_water):
+        if p is None:
+            continue
+        verdict = "unusual" if p.result.is_anomalous else "within the normal range, not counted"
+        if p.name == "hot_water":
+            out.append(f"<p>Hot water: {p.value:.1f} kWh vs a normal {p.baseline.median:.1f} kWh "
+                       f"for a {wd} &mdash; {verdict}.</p>")
+        elif p.basis == "weather":
+            out.append(f"<p>Heating and cooling (all HVAC except hot water): {p.value:.1f} kWh vs an "
+                       f"average {p.baseline.median:.1f} kWh on {p.baseline.n} days at similar "
+                       f"temperature (within {rb.SIMILAR_TEMP_F:.0f}&deg;F of {hvac.temp_f:.0f}&deg;F, "
+                       f"last {rb.SIMILAR_LOOKBACK_DAYS} days) &mdash; {verdict}.</p>")
+        else:
+            out.append(f"<p>Heating and cooling (all HVAC except hot water): {p.value:.1f} kWh vs a "
+                       f"normal {p.baseline.median:.1f} kWh for a {wd} (too few days at similar "
+                       f"temperature to compare) &mdash; {verdict}.</p>")
+    return "\n".join(out)
+
+
 def render_anomaly_email(target_date: date,
                          alerts: list[tuple[str, float, "rb.Baseline", "rb.AnomalyResult"]],
                          top_circuits: dict[str, list[tuple[str, float]]],
                          mode_split: dict[str, float] | None = None,
-                         episode_since: dict[str, date] | None = None) -> tuple[str, str]:
+                         episode_since: dict[str, date] | None = None,
+                         hvac: "rb.HvacJudgement | None" = None) -> tuple[str, str]:
     """(subject, html). Subject carries the whole message — most days it's
     actionable without opening (spec: 'The anomaly email' > Content).
     `episode_since` maps category -> episode start; a missing category (or one
-    starting on target_date) reads as new, otherwise "Day N since Mon D"."""
+    starting on target_date) reads as new, otherwise "Day N since Mon D".
+    `hvac`, when given, replaces the HVAC block's generic comparison with the
+    split-and-compare copy (what the day was compared against, and the $ excess)."""
     episode_since = episode_since or {}
+    wd = target_date.strftime("%A")
 
     def episode_days(cat: str) -> int:
         since = episode_since.get(cat)
@@ -1492,7 +1523,11 @@ def render_anomaly_email(target_date: date,
 
     if len(alerts) == 1:
         cat, value, baseline, result = alerts[0]
-        if result.pct is None:
+        if cat == "HVAC" and hvac is not None:
+            c = hvac.combined_kwh
+            above = "above" if c > 0 else "below"
+            subject = f"⚡ HVAC {abs(c):.1f} kWh {above} expected (${abs(c) * ENERGY_RATE:.2f})"
+        elif result.pct is None:
             # Baseline median is 0 (e.g. a circuit that's normally idle on this
             # weekday) — a percentage vs. zero is undefined, so fall back to an
             # absolute comparison instead of rendering "inf%".
@@ -1519,9 +1554,13 @@ def render_anomaly_email(target_date: date,
         n = episode_days(cat)
         age = ("<strong>NEW today</strong> &middot; " if n <= 1 else
                f"Day {n} since {episode_since[cat].strftime('%b %-d')} &middot; ")
+        if cat == "HVAC" and hvac is not None:
+            lead = _hvac_copy(target_date, value, age, hvac)
+        else:
+            lead = (f'<p>{age}{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a\n'
+                    f'{wd} (${value * ENERGY_RATE:.2f}).</p>')
         blocks.append(f'''<h3>{_esc(cat)}</h3>
-<p>{age}{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
-{target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
+{lead}
 {split_line}<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
 <p><a href="{link}">Open {_esc(cat)} on {target_date.strftime("%A")} in the dashboard</a></p>''')
 
@@ -1556,7 +1595,7 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
 
     alerts = []
     episode_since: dict[str, date] = {}
-    hvac_judgement = None  # passed to the renderer in the HVAC email copy (Task 4)
+    hvac_judgement = None
     for v in evaluate_day(target_date, day_cat, hot_water_daily, temps):
         if v.action == "skip":
             logger.info(f"{v.category}: too few baseline samples, skipping")
@@ -1592,7 +1631,7 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
         except Exception as e:
             logger.warning(f"{target_date}: hvac_mode query failed, omitting mode split: {e}")
     subject, html = render_anomaly_email(target_date, alerts, top_circuits, mode_split,
-                                         episode_since)
+                                         episode_since, hvac=hvac_judgement)
     send_email(html, subject)
 
 
