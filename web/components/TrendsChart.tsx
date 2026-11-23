@@ -1,11 +1,13 @@
 "use client";
 
 // Hand-rolled SVG stacked bars for /trends: one bar per Pacific calendar
-// period, layers bottom → top in LAYER_ORDER. Manual-verify (no chart tests).
+// period: house layers bottom → top in HOUSE_LAYER_ORDER above zero, the car
+// below zero on the same axis. Manual-verify (no chart tests).
 
 import { useEffect, useRef, useState } from "react";
-import { LAYER_ORDER, type LayerKey } from "@/lib/trendLayers";
+import { HOUSE_LAYER_ORDER, type LayerKey } from "@/lib/trendLayers";
 import type { TrendBar } from "@/lib/trendsPayload";
+import { axisY, trendAxis } from "@/lib/trendAxis";
 import { projectionFactor, type TrendGrain } from "@/lib/trends";
 import { costForKwh, proratedBaseCharge } from "@/lib/rates";
 import type { TrendUnit } from "@/lib/whereItWent";
@@ -29,19 +31,16 @@ const RADIUS = 4;
 export const layerFill = (k: LayerKey) =>
   k === "hvacOther" ? "url(#trend-hatch)" : `var(--trend-${k})`;
 
-/** Round the axis max up to 1/2/2.5/5 × 10^n so 4 gridlines land on round numbers. */
-function niceMax(v: number): number {
-  if (v <= 0) return 1;
-  const step = v / 4;
-  const mag = 10 ** Math.floor(Math.log10(step));
-  const nice = [1, 2, 2.5, 5, 10].find((m) => m * mag >= step)! * mag;
-  return nice * 4;
-}
-
 /** Rounded top corners, square bottom — the data end is the top. */
 function topRoundedRect(x: number, y: number, w: number, h: number, r: number) {
   const rr = Math.min(r, w / 2, h);
   return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
+}
+
+/** Square top, rounded bottom corners — the car bar's data end is the bottom. */
+function bottomRoundedRect(x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.min(r, w / 2, h);
+  return `M${x},${y} V${y + h - rr} Q${x},${y + h} ${x + rr},${y + h} H${x + w - rr} Q${x + w},${y + h} ${x + w},${y + h - rr} V${y} Z`;
 }
 
 export function TrendsChart({
@@ -74,15 +73,19 @@ export function TrendsChart({
   const fmtTick = (n: number) =>
     unit === "usd" ? `$${Math.round(n)}` : n >= 1000 ? `${n / 1000}k` : String(Math.round(n));
 
-  const present = LAYER_ORDER.filter((k) => periods.some((p) => p.layers[k] > 0));
+  const present = HOUSE_LAYER_ORDER.filter((k) => periods.some((p) => p.layers[k] > 0));
+  const hasCar = periods.some((p) => p.layers.car > 0);
   // An in-progress period is drawn at its projected full-period size.
   const scale = (p: TrendBar) => projectionFactor(p) ?? 1;
-  const yMax = niceMax(Math.max(0, ...periods.map((p) => v(p.layers.totalKwh) * scale(p))));
+  // House actual-so-far in the active unit; in $ mode includes the prorated base charge.
+  const houseActual = (p: TrendBar) =>
+    v(p.layers.houseKwh) + (unit === "usd" ? proratedBaseCharge(p.toMs - p.fromMs) : 0);
+  const axis = trendAxis(periods, unit);
   const plotW = width - PAD.left - PAD.right;
   const plotH = HEIGHT - PAD.top - PAD.bottom;
   const band = periods.length ? plotW / periods.length : plotW;
   const barW = Math.min(56, band * 0.68);
-  const y = (val: number) => PAD.top + plotH - (val / yMax) * plotH;
+  const y = (val: number) => axisY(axis, val, PAD.top, plotH);
   const anyPartial = periods.some((p) => p.partialStart || (!p.complete && projectionFactor(p) === null));
   const projected = periods.filter((p) => projectionFactor(p) !== null);
 
@@ -99,6 +102,14 @@ export function TrendsChart({
             {LAYER_LABELS[k]}
           </li>
         ))}
+        {hasCar && (
+          <li className="flex items-center gap-1.5">
+            <svg width="10" height="10" aria-hidden>
+              <rect width="10" height="10" rx="2" fill={layerFill("car")} />
+            </svg>
+            {COPY.carLegend}
+          </li>
+        )}
       </ul>
 
       <div ref={wrapRef} className="relative w-full">
@@ -116,10 +127,9 @@ export function TrendsChart({
             </pattern>
           </defs>
 
-          {[0, 1, 2, 3, 4].map((i) => {
-            const val = (yMax / 4) * i;
+          {axis.ticks.map((val) => {
             return (
-              <g key={i}>
+              <g key={val}>
                 <line
                   x1={PAD.left}
                   x2={width - PAD.right}
@@ -129,7 +139,7 @@ export function TrendsChart({
                   strokeWidth={1}
                 />
                 <text x={PAD.left - 6} y={y(val) + 4} textAnchor="end" className="fill-zinc-500 text-[11px]">
-                  {fmtTick(val)}
+                  {fmtTick(Math.abs(val))}
                 </text>
               </g>
             );
@@ -139,12 +149,16 @@ export function TrendsChart({
             const x = PAD.left + band * i + (band - barW) / 2;
             const k = scale(p);
             const isProjected = k !== 1;
-            const total = v(p.layers.totalKwh) * k;
+            const total = v(p.layers.houseKwh) * k;
             const top = y(total);
             const barPath = topRoundedRect(x, top, barW, Math.max(0, y(0) - top), RADIUS);
             const dim = selKey !== null && selKey !== p.key;
             let acc = 0;
             const clipId = `trend-clip-${i}`;
+            const carClipId = `trend-car-clip-${i}`;
+            const carActual = v(p.layers.car);
+            const carBottom = y(-carActual * k);
+            const carPath = bottomRoundedRect(x, y(0), barW, Math.max(0, carBottom - y(0)), RADIUS);
             return (
               <g
                 key={p.key}
@@ -157,7 +171,7 @@ export function TrendsChart({
                   <path d={barPath} />
                 </clipPath>
                 <g clipPath={`url(#${clipId})`} opacity={isProjected ? 0.45 : 1}>
-                  {LAYER_ORDER.map((k) => {
+                  {HOUSE_LAYER_ORDER.map((k) => {
                     const val = v(p.layers[k]) * scale(p);
                     if (val <= 0) return null;
                     const y0 = y(acc);
@@ -170,18 +184,49 @@ export function TrendsChart({
                     return <rect key={k} x={x} y={y1 + gap} width={barW} height={h} fill={layerFill(k)} />;
                   })}
                 </g>
-{isProjected && (
+                {isProjected && (
                   <>
                     <path d={barPath} fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="4 3" className="text-zinc-500" />
                     <line
                       x1={x - 3}
                       x2={x + barW + 3}
-                      y1={y(v(p.layers.totalKwh))}
-                      y2={y(v(p.layers.totalKwh))}
+                      y1={y(v(p.layers.houseKwh))}
+                      y2={y(v(p.layers.houseKwh))}
                       stroke="currentColor"
                       strokeWidth={2}
                       className="text-zinc-900 dark:text-zinc-100"
                     />
+                  </>
+                )}
+                {p.layers.car > 0 && (
+                  <>
+                    <clipPath id={carClipId}>
+                      <path d={carPath} />
+                    </clipPath>
+                    <g clipPath={`url(#${carClipId})`}>
+                      <rect
+                        x={x}
+                        y={y(0) + GAP}
+                        width={barW}
+                        height={Math.max(0, carBottom - y(0) - GAP)}
+                        fill={layerFill("car")}
+                        opacity={isProjected ? 0.45 : 1}
+                      />
+                    </g>
+                    {isProjected && (
+                      <>
+                        <path d={carPath} fill="none" stroke="currentColor" strokeWidth={1} strokeDasharray="4 3" className="text-zinc-500" />
+                        <line
+                          x1={x - 3}
+                          x2={x + barW + 3}
+                          y1={y(-carActual)}
+                          y2={y(-carActual)}
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          className="text-zinc-900 dark:text-zinc-100"
+                        />
+                      </>
+                    )}
                   </>
                 )}
                 {/* Hit target: the whole band, taller than the bar. */}
@@ -198,6 +243,17 @@ export function TrendsChart({
               </g>
             );
           })}
+
+          <line
+            x1={PAD.left}
+            x2={width - PAD.right}
+            y1={y(0)}
+            y2={y(0)}
+            stroke="currentColor"
+            strokeWidth={1.5}
+            pointerEvents="none"
+            className="text-zinc-500"
+          />
         </svg>
 
         {hovered && hover !== null && (
@@ -214,7 +270,7 @@ export function TrendsChart({
             </div>
             <table className="w-full">
               <tbody>
-                {[...LAYER_ORDER].reverse().map((k) =>
+                {[...HOUSE_LAYER_ORDER].reverse().map((k) =>
                   hovered.layers[k] > 0 ? (
                     <tr key={k}>
                       <td className="pr-2">
@@ -234,10 +290,10 @@ export function TrendsChart({
                   </tr>
                 )}
                 <tr className="border-t border-zinc-200 font-semibold dark:border-zinc-700">
-                  <td className="pt-1">{COPY.total}</td>
+                  <td className="pt-1">{COPY.houseTotal}</td>
                   <td className="whitespace-nowrap pt-1 text-right tabular-nums">
                     {fmt(
-                      (v(hovered.layers.totalKwh) +
+                      (v(hovered.layers.houseKwh) +
                         (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0)) *
                         scale(hovered),
                     )}
@@ -247,11 +303,23 @@ export function TrendsChart({
                   <tr className="text-zinc-500">
                     <td className="pr-2">{COPY.actualSoFar}</td>
                     <td className="whitespace-nowrap text-right tabular-nums">
-                      {fmt(
-                        v(hovered.layers.totalKwh) +
-                          (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0),
-                      )}
+                      {fmt(houseActual(hovered))}
                     </td>
+                  </tr>
+                )}
+                {hovered.layers.car > 0 && (
+                  <tr className="border-t border-zinc-200 dark:border-zinc-700">
+                    <td className="pt-1 pr-2">
+                      <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: "var(--trend-car)" }} />
+                      {LAYER_LABELS.car}
+                    </td>
+                    <td className="whitespace-nowrap pt-1 text-right tabular-nums">{fmt(v(hovered.layers.car) * scale(hovered))}</td>
+                  </tr>
+                )}
+                {hovered.layers.car > 0 && scale(hovered) !== 1 && (
+                  <tr className="text-zinc-500">
+                    <td className="pr-2">{COPY.carActualSoFar}</td>
+                    <td className="whitespace-nowrap text-right tabular-nums">{fmt(v(hovered.layers.car))}</td>
                   </tr>
                 )}
               </tbody>
@@ -265,7 +333,8 @@ export function TrendsChart({
             tickLabel(p, grain),
             fmtDays(p.toMs - p.fromMs),
             fmtDays(p.calendarToMs - p.fromMs),
-            fmt(v(p.layers.totalKwh)),
+            fmt(houseActual(p)),
+            p.layers.car > 0 ? fmt(v(p.layers.car)) : null,
           )}
         </div>
       ))}
