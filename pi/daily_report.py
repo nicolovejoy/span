@@ -1131,6 +1131,20 @@ def render_yoy_line(ctx: WeeklyContext) -> str:
     return f'\n<p style="font-size:13px;color:#444;">{" ".join(parts)}</p>'
 
 
+def render_car_line(ctx: WeeklyContext) -> str:
+    """The car's own line under the house headline: kWh and $, change vs last
+    week (kWh, then %), 12-week average. build_weekly_context always fills
+    ctx.car (zeros when nothing charged), so "no car line" means no charging
+    this week, last week or in the 12-week average, not an empty dict."""
+    c = ctx.car
+    if not c or not (c["kwh"] or c["last_week_kwh"] or c["avg12_kwh"]):
+        return ""
+    return (f'\n<p style="font-size:13px;color:#444;">Car (EV charging, not in the house figures): '
+            f'<strong>{c["kwh"]:.1f} kWh</strong> (${c["cost"]:.2f}), '
+            f'{c["delta_kwh"]:+.1f} kWh vs last week{_delta_arrow_pct(c["delta_pct"], "")} '
+            f'&middot; 12-wk avg {c["avg12_kwh"]:.1f} kWh.</p>')
+
+
 def render_headline(ctx: WeeklyContext) -> str:
     h = ctx.headline
     week_delta = _delta_arrow_pct(h["delta_vs_last_week_pct"], " vs last week")
@@ -1141,8 +1155,8 @@ def render_headline(ctx: WeeklyContext) -> str:
             if h["top_mover"] else "")
     return f'''<h2>Weekly Energy Report &mdash; {ctx.date_str}</h2>
 <p style="font-size:15px;">
-<strong>{h["kwh"]:.1f} kWh</strong> (${h["cost"]:.2f}){week_delta}{avg_delta}{long_delta}.{mover}
-</p>{render_yoy_line(ctx)}'''
+<strong>House: {h["kwh"]:.1f} kWh</strong> (${h["cost"]:.2f}){week_delta}{avg_delta}{long_delta}.{mover}
+</p>{render_yoy_line(ctx)}{render_car_line(ctx)}'''
 
 
 def _delta_arrow_pct(pct: float | None, suffix: str) -> str:
@@ -1277,7 +1291,7 @@ def render_usage_table(ctx: WeeklyContext) -> str:
     for r in ctx.usage_rows:
         yoy_cell = f'<td>{pct_cell(r.get("delta_yoy_pct"))}</td>' if yoy_week else ""
         rows_html.append(
-            f'<tr><td>{_esc(r["category"])}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
+            f'<tr><td>{_esc("Car (EV charging)" if r["category"] == "Car" else r["category"])}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
             f'<td>{pct_cell(r["delta_week_pct"])}</td><td>{pct_cell(r["delta_12wk_pct"])}</td>'
             f'<td>{pct_cell(r["delta_long_pct"])}</td>{yoy_cell}</tr>'
         )

@@ -496,6 +496,10 @@ class BuildWeeklyContextTest(unittest.TestCase):
         self.assertAlmostEqual(aug_totals.get("HVAC", 0.0), 10.0)
 
 
+CAR = {"kwh": 54.6, "cost": 6.78, "last_week_kwh": 41.6, "delta_kwh": 13.0, "delta_pct": 31.25,
+       "avg12_kwh": 42.1}
+
+
 class RenderTest(unittest.TestCase):
     def make_ctx(self, **overrides):
         base = dict(
@@ -520,6 +524,52 @@ class RenderTest(unittest.TestCase):
         html = dr.render_headline(self.make_ctx())
         self.assertIn("210.0", html.replace(",", ""))
         self.assertIn("HVAC", html)
+
+    def test_headline_is_labelled_house_and_car_has_its_own_line(self):
+        html = dr.render_headline(self.make_ctx(car=CAR))
+        self.assertIn("House: 210.0 kWh", html)
+        self.assertIn("Car (EV charging, not in the house figures): <strong>54.6 kWh</strong> ($6.78), "
+                      "+13.0 kWh vs last week", html)
+        self.assertIn("&uarr;31%", html)
+        self.assertIn("12-wk avg 42.1 kWh.", html)
+
+    def test_car_line_order_house_then_yoy_then_car(self):
+        yoy = {"week": {"lo": date(2025, 8, 4), "hi": date(2025, 8, 10), "kwh": 200.0}, "centered": None}
+        html = dr.render_headline(self.make_ctx(car=CAR, yoy=yoy))
+        self.assertLess(html.index("House:"), html.index("Same week last year"))
+        self.assertLess(html.index("Same week last year"), html.index("Car (EV charging"))
+
+    def test_car_line_with_a_zero_week_after_charging_has_no_percent_under_a_1kwh_base(self):
+        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 0.0, "delta_kwh": 0.0, "delta_pct": None, "avg12_kwh": 4.2}
+        line = dr.render_car_line(self.make_ctx(car=car))
+        self.assertIn("<strong>0.0 kWh</strong> ($0.00), +0.0 kWh vs last week", line)
+        self.assertIn("12-wk avg 4.2 kWh.", line)
+        self.assertNotIn("%", line)
+
+    def test_car_line_shows_a_week_without_charging_after_a_week_with(self):
+        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.6, "delta_pct": -100.0,
+               "avg12_kwh": 42.1}
+        self.assertIn("-41.6 kWh vs last week", dr.render_car_line(self.make_ctx(car=car)))
+
+    def test_car_line_hidden_when_the_car_never_charged(self):
+        # build_weekly_context always fills ctx.car, with zeros when nothing charged
+        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 0.0, "delta_kwh": 0.0, "delta_pct": None, "avg12_kwh": 0.0}
+        self.assertEqual(dr.render_car_line(self.make_ctx(car=car)), "")
+        self.assertNotIn("Car (EV charging", dr.render_headline(self.make_ctx(car=car)))
+
+    def test_car_line_absent_without_car_data(self):
+        self.assertEqual(dr.render_car_line(self.make_ctx()), "")
+
+    def test_usage_table_labels_the_car_row(self):
+        rows = [{"category": "Car", "kwh": 54.6, "cost": 6.78, "delta_week_pct": None, "delta_12wk_pct": None,
+                 "delta_long_pct": None, "top_circuits": []}]
+        self.assertIn("<td>Car (EV charging)</td>", dr.render_usage_table(self.make_ctx(usage_rows=rows)))
+
+    def test_plain_text_part_carries_house_and_car_numbers(self):
+        from email_kit import html_to_text
+        text = html_to_text(dr.build_weekly_html(self.make_ctx(car=CAR)))
+        self.assertIn("House: 210.0 kWh ($27.87)", text)
+        self.assertIn("Car (EV charging, not in the house figures): 54.6 kWh ($6.78), +13.0 kWh vs last week ↑31%", text)
 
     def test_render_12mo_trend_chart_smoke(self):
         html = dr.render_12mo_trend_chart(self.make_ctx())
