@@ -32,6 +32,12 @@ export const onlyThese = (keys: readonly string[]): OffSet => ({
 export const chartCategories = (off: OffSet): string[] =>
   CATEGORY_ORDER.filter((c) => isOn(off, c));
 
+/** The dotted Total line (whole house) is the reference for the full stack, so
+ *  it shows unless a chart category is off. Unmonitored has no power series:
+ *  turning only it off changes the numbers, not the chart. */
+export const showTotal = (off: OffSet): boolean =>
+  chartCategories(off).length === CATEGORY_ORDER.length;
+
 export type PresetId = "everything" | "house" | "hvac" | "car";
 export const PRESET_IDS: readonly PresetId[] = ["everything", "house", "hvac", "car"];
 

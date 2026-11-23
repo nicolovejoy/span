@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AreaSeries,
+  type AutoscaleInfo,
   createChart,
   LineSeries,
   LineStyle,
@@ -27,7 +28,7 @@ import { fetchSeriesCached } from "@/lib/clientFetch";
 import type { SeriesPoint } from "@/lib/influx";
 import type { DashState } from "@/lib/url-state";
 import { stackLayers } from "@/lib/stack";
-import { chartCategories, isFiltered, serializeOff, type OffSet } from "@/lib/selection";
+import { chartCategories, serializeOff, showTotal, type OffSet } from "@/lib/selection";
 import { affineXOf, resolveAnchors, type XOf } from "@/lib/eventLanes";
 import type { EventsPayload } from "@/lib/eventRuns";
 import { EventLanes } from "./EventLanes";
@@ -350,16 +351,20 @@ export function PowerChart({
       const series = catSeriesRef.current.get(cat);
       if (!series) continue;
       const layer = layers.get(cat);
-      if (layer) {
-        try {
-          series.setData(toChartData(padBounds(layer, d.outerFromSec, d.outerToSec)));
-        } catch (e) {
-          console.warn(`setData failed for ${cat}`, e);
-        }
+      // A band with no layer still gets the padded empty data for the loaded
+      // window, every pass: lightweight-charts builds its time axis from hidden
+      // series too, so stale points from an earlier window or bucket size would
+      // warp the axis and the event lanes' time-to-x map.
+      try {
+        series.setData(
+          toChartData(padBounds(layer ?? [], d.outerFromSec, d.outerToSec)),
+        );
+      } catch (e) {
+        console.warn(`setData failed for ${cat}`, e);
       }
       series.applyOptions({ visible: layer !== undefined });
     }
-    totalSeriesRef.current?.applyOptions({ visible: !isFiltered(off) && !drill });
+    totalSeriesRef.current?.applyOptions({ visible: showTotal(off) && !drill });
   };
 
   // Create chart + series once
@@ -378,7 +383,10 @@ export function PowerChart({
         horzLines: { color: "rgba(120,120,120,0.1)" },
       },
       localization: { timeFormatter: crosshairFmt },
-      rightPriceScale: { borderVisible: false },
+      // Bands fill down to the pane bottom, so the axis must bottom out at 0 or
+      // the lowest band's height misstates its share. The maximum still follows
+      // the current selection (see the band series' autoscaleInfoProvider).
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0 } },
       timeScale: {
         borderVisible: false,
         timeVisible: true,
@@ -420,6 +428,15 @@ export function PowerChart({
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,
+        // Pin the floor to 0; keep the data-driven maximum.
+        autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+          const res = original();
+          if (res === null || res.priceRange === null) return res;
+          return {
+            ...res,
+            priceRange: { minValue: 0, maxValue: Math.max(res.priceRange.maxValue, 0) },
+          };
+        },
       });
       catSeriesRef.current.set(cat, s);
     }
@@ -707,7 +724,7 @@ export function PowerChart({
 
   // Top of the stack first, so the legend reads like the bands look.
   const legend: LegendEntry[] = [
-    ...(isFiltered(state.off) || state.drill
+    ...(!showTotal(state.off) || state.drill
       ? []
       : [{ label: "Total", color: TOTAL_COLOR, dotted: true }]),
     ...chartCategories(state.off)

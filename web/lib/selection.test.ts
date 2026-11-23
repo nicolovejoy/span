@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EVERYTHING, SELECTABLE, activePreset, chartCategories, isFiltered, isOn,
-  offFromShow, onlyThese, parseOff, presetOff, sameOff, serializeOff, toggle,
+  offFromShow, onlyThese, parseOff, presetOff, sameOff, serializeOff, showTotal, toggle,
 } from "./selection";
 
 describe("selectable keys", () => {
@@ -85,5 +85,22 @@ describe("offFromShow (legacy show= URLs)", () => {
   it("a show with only unknown names means everything, not nothing", () => {
     expect(offFromShow(["Furnace"])).toEqual(EVERYTHING);
     expect(offFromShow(["Furnace", "Boiler"])).toEqual(EVERYTHING);
+  });
+});
+
+describe("showTotal", () => {
+  it("is shown with everything on", () => {
+    expect(showTotal(EVERYTHING)).toBe(true);
+  });
+  it("stays shown when only Unmonitored is off (it has no power series)", () => {
+    expect(showTotal({ categories: ["Unmonitored"] })).toBe(true);
+  });
+  it("is hidden when a chart category is off", () => {
+    expect(showTotal({ categories: ["Car"] })).toBe(false);
+    expect(showTotal({ categories: ["Car", "Unmonitored"] })).toBe(false);
+  });
+  it("is hidden when everything is off", () => {
+    const none = SELECTABLE.reduce((o, k) => toggle(o, k), EVERYTHING);
+    expect(showTotal(none)).toBe(false);
   });
 });
