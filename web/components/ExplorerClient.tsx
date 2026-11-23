@@ -13,6 +13,13 @@ import { EventList } from "./EventList";
 import { stepWindow } from "@/lib/brush";
 import { initView, reducer } from "@/lib/viewState";
 import { buildIntentSearch, type DashState } from "@/lib/url-state";
+import {
+  SELECTABLE,
+  isFiltered,
+  isOn,
+  offFromShow,
+  serializeOff,
+} from "@/lib/selection";
 import { fetchEnergyCached, fetchEventsCached, seedEnergy } from "@/lib/clientFetch";
 import { mergeDrillRows } from "@/lib/energyWindow";
 import { MODES_MAX_WINDOW_MS, type EventsPayload } from "@/lib/eventRuns";
@@ -69,12 +76,12 @@ export function ExplorerClient({
   useEffect(() => {
     const search = buildIntentSearch(
       view.rangePreset,
-      view.show,
+      view.off,
       view.drill,
       view.events,
     );
     window.history.replaceState(null, "", search ? `/?${search}` : "/");
-  }, [view.rangePreset, view.show, view.drill, view.events]);
+  }, [view.rangePreset, serializeOff(view.off), view.drill, view.events]);
 
   // Breakdown table — cache-backed energy fetch for the visible window.
   const [rows, setRows] = useState<EnergyRow[]>(initialEnergy);
@@ -158,14 +165,7 @@ export function ExplorerClient({
     };
   }, [visible.fromMs, visible.toMs, view.events]);
 
-  const filtered =
-    view.show.length === 0
-      ? rows
-      : rows.filter(
-          (r) =>
-            view.show.includes(r.category) ||
-            (r.parent !== undefined && view.show.includes(r.parent)),
-        );
+  const filtered = rows.filter((r) => isOn(view.off, r.parent ?? r.category));
   const tableRows = mergeDrillRows(filtered, circuitRows, view.drill);
 
   return (
@@ -221,8 +221,8 @@ export function ExplorerClient({
       <div className="flex items-center justify-between gap-2">
         <div className="focus-hide min-w-0 flex-1">
           <QuickFilters
-            show={view.show}
-            onChange={(show) => dispatch({ type: "show", show })}
+            show={isFiltered(view.off) ? SELECTABLE.filter((k) => isOn(view.off, k)) : []}
+            onChange={(show) => dispatch({ type: "select", off: offFromShow(show) })}
             drill={view.drill}
             onDrill={(category) => dispatch({ type: "drill", category })}
             events={view.events}

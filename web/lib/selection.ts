@@ -50,9 +50,10 @@ export const sameOff = (a: OffSet, b: OffSet): boolean =>
 export const activePreset = (off: OffSet): PresetId | null =>
   PRESET_IDS.find((id) => sameOff(presetOff(id), off)) ?? null;
 
-/** Legacy `show=` (a list of what is ON; empty = all) → OffSet. */
+/** Legacy `show=` (a list of what is ON; empty = all) → OffSet. A list with no
+ *  known name (`show=Furnace`) is treated like an empty one: everything on. */
 export const offFromShow = (show: readonly string[]): OffSet =>
-  show.length === 0 ? EVERYTHING : onlyThese(show);
+  show.some((k) => SELECTABLE.includes(k)) ? onlyThese(show) : EVERYTHING;
 
 export const parseOff = (raw: string | undefined): OffSet => ({
   categories: canonical((raw ?? "").split(",").map((s) => s.trim()).filter(Boolean)),

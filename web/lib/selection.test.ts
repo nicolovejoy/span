@@ -82,4 +82,8 @@ describe("offFromShow (legacy show= URLs)", () => {
   it("ignores unknown names", () => {
     expect(offFromShow(["HVAC", "Furnace"])).toEqual(offFromShow(["HVAC"]));
   });
+  it("a show with only unknown names means everything, not nothing", () => {
+    expect(offFromShow(["Furnace"])).toEqual(EVERYTHING);
+    expect(offFromShow(["Furnace", "Boiler"])).toEqual(EVERYTHING);
+  });
 });

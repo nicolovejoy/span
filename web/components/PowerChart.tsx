@@ -25,6 +25,7 @@ import { padWindow, needsExtension, extendWindow } from "@/lib/panWindow";
 import { fetchSeriesCached } from "@/lib/clientFetch";
 import type { SeriesPoint } from "@/lib/influx";
 import type { DashState } from "@/lib/url-state";
+import { chartCategories, isFiltered, isOn, serializeOff } from "@/lib/selection";
 import { affineXOf, resolveAnchors, type XOf } from "@/lib/eventLanes";
 import type { EventsPayload } from "@/lib/eventRuns";
 import { EventLanes } from "./EventLanes";
@@ -620,7 +621,7 @@ export function PowerChart({
             catch (e) { console.warn(`setData failed for ${cat}`, e); }
             // The drilled category is replaced by its circuits, not doubled up.
             const visible =
-              (state.show.length === 0 || state.show.includes(cat)) &&
+              isOn(state.off, cat) &&
               cat !== load.drill;
             series.applyOptions({ visible });
           }
@@ -656,7 +657,7 @@ export function PowerChart({
           // flattens them into noise along the axis.
           totalSeriesRef.current?.applyOptions({ visible: !load.drill });
 
-          applySum(state.show);
+          applySum(isFiltered(state.off) ? chartCategories(state.off) : []);
 
           // Show the preset window (a slice of the loaded one) on a reset;
           // restore the pre-setData view on an extension.
@@ -691,7 +692,7 @@ export function PowerChart({
     return () => {
       cancelled = true;
     };
-    // applySum + state.show read fresh each run; not deps (loaded window only).
+    // applySum + state.off read fresh each run; not deps (loaded window only).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
@@ -704,14 +705,14 @@ export function PowerChart({
       if (!series) continue;
       series.applyOptions({
         visible:
-          (state.show.length === 0 || state.show.includes(cat)) &&
+          isOn(state.off, cat) &&
           cat !== state.drill,
       });
     }
     totalSeriesRef.current?.applyOptions({ visible: !state.drill });
-    applySum(state.show);
+    applySum(isFiltered(state.off) ? chartCategories(state.off) : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.show.join(","), state.drill]);
+  }, [serializeOff(state.off), state.drill]);
 
   // Drilled circuits are listed under their category, capped so a big category
   // (Else can be 10+) can't push the label stack over the plot area. Shades are
@@ -730,11 +731,11 @@ export function PowerChart({
     ...(state.drill
       ? []
       : [{ label: "Total", color: TOTAL_COLOR, dotted: true }]),
-    ...(state.show.length >= 2
+    ...(isFiltered(state.off) && chartCategories(state.off).length >= 2
       ? [{ label: "Sum", color: SUM_COLOR }]
       : []),
     ...CATEGORY_ORDER.filter(
-      (c) => state.show.length === 0 || state.show.includes(c),
+      (c) => isOn(state.off, c),
     ).flatMap((c): LegendEntry[] =>
       c === state.drill
         ? [
