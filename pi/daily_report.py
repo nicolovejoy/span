@@ -27,6 +27,7 @@ from rates import ENERGY_RATE, BASE_CHARGE_DAILY
 import report_baseline as rb
 import collector_health as ch
 import attribution
+from ev_circuit import CHARGE_CIRCUIT
 from email_kit import dash_url, html_to_text, wrap_email
 from hvac_modes import COOL_MIN_TEMP_F
 
@@ -443,11 +444,14 @@ def local_week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def category_day_kwh(rows: list[tuple[str, date, float]]) -> dict[date, dict[str, float]]:
-    """rows -> {local_date: {category: kwh}}, circuits rolled up via display_bucket."""
+def category_day_kwh(rows: list[tuple[str, date, float]],
+                     bucket=None) -> dict[date, dict[str, float]]:
+    """rows -> {local_date: {category: kwh}}, circuits rolled up via `bucket`
+    (default display_bucket)."""
+    bucket = bucket or display_bucket
     out: dict[date, dict[str, float]] = {}
     for name, day, kwh in rows:
-        cat = display_bucket(name)
+        cat = bucket(name)
         day_map = out.setdefault(day, {})
         day_map[cat] = day_map.get(cat, 0.0) + kwh
     return out
@@ -475,10 +479,12 @@ def circuit_week_totals(rows: list[tuple[str, date, float]], week_start: date) -
 
 
 def category_top_circuits(rows: list[tuple[str, date, float]], week_start: date,
-                          category: str, n: int = 5) -> list[tuple[str, float]]:
+                          category: str, n: int = 5,
+                          bucket=None) -> list[tuple[str, float]]:
     """Top-n circuits by kWh within `category`, for the usage table's nested rows."""
+    bucket = bucket or display_bucket
     totals = circuit_week_totals(rows, week_start)
-    names = [name for name in totals if display_bucket(name) == category]
+    names = [name for name in totals if bucket(name) == category]
     return sorted(((name, totals[name]) for name in names), key=lambda x: -x[1])[:n]
 
 
@@ -945,6 +951,26 @@ def display_bucket(name: str) -> str:
         if pat.search(name):
             return category
     return default
+
+
+def weekly_bucket(name: str) -> str:
+    """display_bucket for the weekly briefing: "Car" is exactly the charger
+    circuit (CHARGE_CIRCUIT), never the categories.json Car regex, so the
+    briefing and charge_detector count the same energy. Another circuit the
+    regex calls Car falls to the default bucket."""
+    if name == CHARGE_CIRCUIT:
+        return "Car"
+    bucket = display_bucket(name)
+    if bucket == "Car":
+        return _load_bucket_rules()[1]
+    return bucket
+
+
+def stray_car_circuits(rows: list[tuple[str, date, float]]) -> list[str]:
+    """Circuits the Car regex matches that are not the charger, i.e. the ones
+    weekly_bucket moves out of Car. Sorted, unique."""
+    return sorted({name for name, _day, _kwh in rows
+                   if display_bucket(name) == "Car" and name != CHARGE_CIRCUIT})
 
 
 def _add_cost_axis(ax, label: str) -> None:

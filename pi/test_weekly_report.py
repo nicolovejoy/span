@@ -108,6 +108,23 @@ class GroupingTest(unittest.TestCase):
         ("Tesla Car Charger", date(2026, 8, 3), 10.0),
     ]
 
+    def test_weekly_bucket_pins_car_to_the_charge_circuit(self):
+        self.assertEqual(dr.weekly_bucket(dr.CHARGE_CIRCUIT), "Car")
+        self.assertEqual(dr.weekly_bucket("Garage / EV outlet"), "Else")   # regex says Car
+        self.assertEqual(dr.weekly_bucket("Heat pump (HP) / Compressor"), "HVAC")
+        self.assertEqual(dr.display_bucket("Garage / EV outlet"), "Car")   # anomaly path unchanged
+
+    def test_category_day_kwh_takes_a_bucket(self):
+        rows = [(dr.CHARGE_CIRCUIT, date(2026, 11, 16), 18.0), ("Garage / EV outlet", date(2026, 11, 16), 2.0)]
+        self.assertEqual(dr.category_day_kwh(rows, bucket=dr.weekly_bucket),
+                         {date(2026, 11, 16): {"Car": 18.0, "Else": 2.0}})
+        self.assertEqual(dr.category_day_kwh(rows), {date(2026, 11, 16): {"Car": 20.0}})
+
+    def test_stray_car_circuits_lists_regex_matches_that_are_not_the_charger(self):
+        rows = [(dr.CHARGE_CIRCUIT, date(2026, 11, 16), 1.0), ("Garage / EV outlet", date(2026, 11, 16), 1.0),
+                ("Garage / EV outlet", date(2026, 11, 17), 1.0)]
+        self.assertEqual(dr.stray_car_circuits(rows), ["Garage / EV outlet"])
+
     def test_local_week_start_is_the_monday_on_or_before(self):
         self.assertEqual(dr.local_week_start(date(2026, 8, 3)), date(2026, 8, 3))  # Monday
         self.assertEqual(dr.local_week_start(date(2026, 8, 9)), date(2026, 8, 3))  # Sunday
