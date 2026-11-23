@@ -428,6 +428,8 @@ class BuildWeeklyContextTest(unittest.TestCase):
                                ctx.headline["kwh"], places=6)
         self.assertAlmostEqual(wk["Car"], ctx.car["kwh"], places=6)
         self.assertAlmostEqual(ctx.car["kwh"], 54.0)
+        car_row = next(r for r in ctx.usage_rows if r["category"] == "Car")
+        self.assertAlmostEqual(car_row["kwh"], ctx.car["kwh"], places=6)
 
     def test_house_week_floors_at_zero_when_the_panel_is_missing(self):
         week = date(2026, 8, 3)
@@ -566,7 +568,7 @@ class RenderTest(unittest.TestCase):
     def test_car_line_with_a_zero_week_after_charging_has_no_percent_under_a_1kwh_base(self):
         car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 0.0, "delta_kwh": 0.0, "delta_pct": None, "avg12_kwh": 4.2}
         line = dr.render_car_line(self.make_ctx(car=car))
-        self.assertIn("<strong>0.0 kWh</strong> ($0.00), +0.0 kWh vs last week", line)
+        self.assertIn("<strong>0.0 kWh</strong> ($0.00), &plusmn;0.0 kWh vs last week", line)
         self.assertIn("12-wk avg 4.2 kWh.", line)
         self.assertNotIn("%", line)
 
@@ -574,6 +576,18 @@ class RenderTest(unittest.TestCase):
         car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.6, "delta_pct": -100.0,
                "avg12_kwh": 42.1}
         self.assertIn("-41.6 kWh vs last week", dr.render_car_line(self.make_ctx(car=car)))
+
+    def test_car_line_flat_week_shows_plus_minus_zero_with_no_percent_or_arrow(self):
+        # delta rounds to 0.0 at one decimal: no sign, no percent, no arrow
+        car = {"kwh": 41.64, "cost": 5.0, "last_week_kwh": 41.6, "delta_kwh": 0.04, "delta_pct": 0.1,
+               "avg12_kwh": 42.1}
+        line = dr.render_car_line(self.make_ctx(car=car))
+        self.assertIn("&plusmn;0.0 kWh vs last week &middot;", line)
+        self.assertNotIn("%", line)
+        self.assertNotIn("&uarr;", line)
+        self.assertNotIn("&darr;", line)
+        self.assertNotIn("+0.0", line)
+        self.assertNotIn("-0.0", line)
 
     def test_car_line_hidden_when_the_car_never_charged(self):
         # build_weekly_context always fills ctx.car, with zeros when nothing charged

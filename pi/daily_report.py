@@ -1139,9 +1139,12 @@ def render_car_line(ctx: WeeklyContext) -> str:
     c = ctx.car
     if not c or not (c["kwh"] or c["last_week_kwh"] or c["avg12_kwh"]):
         return ""
+    if round(c["delta_kwh"], 1) == 0:   # flat: no sign, percent or arrow
+        change = "&plusmn;0.0 kWh vs last week"
+    else:
+        change = f'{c["delta_kwh"]:+.1f} kWh vs last week{_delta_arrow_pct(c["delta_pct"], "")}'
     return (f'\n<p style="font-size:13px;color:#444;">Car (EV charging, not in the house figures): '
-            f'<strong>{c["kwh"]:.1f} kWh</strong> (${c["cost"]:.2f}), '
-            f'{c["delta_kwh"]:+.1f} kWh vs last week{_delta_arrow_pct(c["delta_pct"], "")} '
+            f'<strong>{c["kwh"]:.1f} kWh</strong> (${c["cost"]:.2f}), {change} '
             f'&middot; 12-wk avg {c["avg12_kwh"]:.1f} kWh.</p>')
 
 
