@@ -31,3 +31,26 @@ describe("stackLayers", () => {
     expect(s.get("Else")).toEqual([{ time: 1, value: 2 }]);
   });
 });
+
+import { subtractOffCircuits } from "./stack";
+
+const m = (pairs: [number, number][]) => new Map(pairs);
+const catOf = (n: string) => (n.startsWith("hp") ? "HVAC" : "Lights");
+
+describe("subtractOffCircuits", () => {
+  const byCat = new Map([["HVAC", m([[1, 3], [2, 5]])], ["Lights", m([[1, 1], [2, 1]])]]);
+  const circuits = new Map([["hp-ctrl", m([[1, 0.5], [2, 6], [3, 9]])], ["hp-main", m([[1, 2.5], [2, -1]])]]);
+
+  it("removes off circuits from their category, clamped at zero", () => {
+    const out = subtractOffCircuits(byCat, circuits, ["hp-ctrl"], catOf);
+    expect([...out.get("HVAC")!]).toEqual([[1, 2.5], [2, 0]]);
+  });
+  it("leaves other categories as the same map", () => {
+    const out = subtractOffCircuits(byCat, circuits, ["hp-ctrl"], catOf);
+    expect(out.get("Lights")).toBe(byCat.get("Lights"));
+  });
+  it("skips off circuits with no data yet", () => {
+    const out = subtractOffCircuits(byCat, circuits, ["hp-unloaded"], catOf);
+    expect(out.get("HVAC")).toBe(byCat.get("HVAC"));
+  });
+});
