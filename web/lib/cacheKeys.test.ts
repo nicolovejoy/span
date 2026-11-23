@@ -26,6 +26,11 @@ describe("client cache keys", () => {
     );
   });
 
+  it("separates a grid-less (no Unmonitored) request from the default, client and server", () => {
+    expect(seriesCacheKey(FROM, TO, "1h", undefined, false)).not.toBe(seriesCacheKey(FROM, TO, "1h"));
+    expect(makeKey("1h", FROM, TO, undefined, false)).not.toBe(makeKey("1h", FROM, TO));
+  });
+
   it("is stable for the same request", () => {
     expect(seriesCacheKey(FROM, TO, "1h", "Else")).toBe(
       seriesCacheKey(FROM, TO, "1h", "Else"),

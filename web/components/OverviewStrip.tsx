@@ -116,8 +116,10 @@ export function OverviewStrip({ fromMs, toMs, onChange }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  // One all-history fetch on mount: house total (sum of every category) at the
-  // finest bucket that fits one query. Quantized so the cache key is stable
+  // One all-history fetch on mount: the sum of the five categories (not the
+  // Unmonitored series) at the finest bucket that fits one query. It opts out of
+  // the grid query (grid=false): the strip loads on every page, and the panel
+  // scan over all history is the slow part. Quantized so the cache key is stable
   // across remounts within a bucket.
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +128,7 @@ export function OverviewStrip({ fromMs, toMs, onChange }: Props) {
     const stepMs = intervalSeconds(interval) * 1000;
     const q = (ms: number) => Math.floor(ms / stepMs) * stepMs;
 
-    fetchSeriesCached(q(RETENTION_START_MS), q(now), interval)
+    fetchSeriesCached(q(RETENTION_START_MS), q(now), interval, undefined, false)
       .then((data) => {
         if (cancelled || !seriesRef.current) return;
         const totals = new Map<number, number>();

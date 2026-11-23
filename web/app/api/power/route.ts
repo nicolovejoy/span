@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cachedQueryPower } from "@/lib/queryCache";
 import { INTERVAL_ORDER, intervalSeconds, type IntervalKey } from "@/lib/interval";
 import { isCategory } from "@/lib/categories";
+import { powerCacheControl, wantsGrid } from "@/lib/powerCacheControl";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,9 @@ export async function GET(request: Request) {
   // Optional: one series per circuit within this category instead of the five
   // category lines (#12). Absent = the original category response.
   const drill = url.searchParams.get("drill") ?? undefined;
+  // `grid=0` skips the panel query and the Unmonitored series (the Overview
+  // strip, which only sums the five categories).
+  const grid = wantsGrid(url.searchParams.get("grid"));
 
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
     return NextResponse.json(
@@ -36,23 +40,23 @@ export async function GET(request: Request) {
   const qFromMs = Math.floor(fromMs / intervalMs) * intervalMs;
   const qToMs = Math.floor(toMs / intervalMs) * intervalMs;
 
-  const data = await cachedQueryPower({
+  const { data, partial } = await cachedQueryPower({
     fromMs: qFromMs,
     toMs: qToMs,
     interval: intervalRaw,
     drill,
+    grid,
   });
 
-  // Trailing-bucket queries (to ≈ now) change as time passes; cap cache at
-  // one bucket. Historical queries (to is well in the past) are immutable.
-  const isTrailing = Date.now() - toMs < 2 * intervalMs;
-  const maxAge = isTrailing ? Math.max(60, Math.floor(intervalMs / 1000)) : 86400;
-  return NextResponse.json(
-    { data },
-    {
-      headers: {
-        "Cache-Control": `public, max-age=${maxAge}, stale-while-revalidate=3600`,
-      },
+  // `partial` rides along only when set, so the payload is unchanged otherwise.
+  return NextResponse.json(partial ? { data, partial: true } : { data }, {
+    headers: {
+      "Cache-Control": powerCacheControl({
+        partial,
+        toMs,
+        intervalMs,
+        nowMs: Date.now(),
+      }),
     },
-  );
+  });
 }

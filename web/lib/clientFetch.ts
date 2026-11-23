@@ -28,7 +28,8 @@ export const seriesCacheKey = (
   toMs: number,
   interval: IntervalKey,
   drill?: string,
-): string => `${interval}|${drillKey(drill)}|${fromMs}|${toMs}`;
+  grid = true,
+): string => `${interval}|${drillKey(drill)}|${grid || drill ? "g" : "ng"}|${fromMs}|${toMs}`;
 
 export const energyCacheKey = (
   fromMs: number,
@@ -46,8 +47,10 @@ export async function fetchSeriesCached(
   toMs: number,
   interval: IntervalKey,
   drill?: string,
+  /** False opts out of the Unmonitored series (and the server's panel scan). */
+  grid = true,
 ): Promise<SeriesPoint[]> {
-  const key = seriesCacheKey(fromMs, toMs, interval, drill);
+  const key = seriesCacheKey(fromMs, toMs, interval, drill, grid);
   const hit = powerCache.get(key, Date.now());
   if (hit) return hit;
 
@@ -61,12 +64,17 @@ export async function fetchSeriesCached(
     url.searchParams.set("interval", interval);
     url.searchParams.set("shape", POWER_SHAPE);
     if (drill) url.searchParams.set("drill", drill);
+    if (!grid) url.searchParams.set("grid", "0");
     const r = await fetch(url.toString());
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const json = (await r.json()) as { data?: SeriesPoint[] };
+    const json = (await r.json()) as { data?: SeriesPoint[]; partial?: boolean };
     const data = json.data ?? [];
-    const ttl = cacheTtlMs(toMs, intervalSeconds(interval) * 1000, Date.now());
-    powerCache.set(key, data, Date.now() + ttl);
+    // A partial payload (Unmonitored missing because the server's panel query
+    // failed) is shown but never stored: the next request retries.
+    if (!json.partial) {
+      const ttl = cacheTtlMs(toMs, intervalSeconds(interval) * 1000, Date.now());
+      powerCache.set(key, data, Date.now() + ttl);
+    }
     return data;
   })();
 

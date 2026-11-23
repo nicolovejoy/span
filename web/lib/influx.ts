@@ -145,38 +145,60 @@ from(bucket: "${BUCKET}")
 
 /** Whole-house grid power, mean per display bucket, over one segment of a
  *  power query. Always raw (`panel` has no rollup). Same range and
- *  aggregateWindow as that segment's circuit query, so the bucket stamps match
- *  (the rollup path's timeShift puts _start/_stop back on the segment). No
- *  abs(): grid import is positive, and the kWh row integrates it as is.
- *  group() is defensive: `panel` is tagless since the v2 collector. */
+ *  aggregateWindow as that segment's circuit query. queryPower re-stamps both
+ *  sides to min(t, seg.stopMs), so the two queries pair up whichever way Flux
+ *  clips the window after the rollup path's timeShift. No abs(): grid import is
+ *  positive, and the kWh row integrates it as is. No group(): `panel` carries no
+ *  tags (v1 wrote it untagged, v2 maps it with `tags: {}`), so it is one table. */
 function rawPanelPowerFlux(seg: Segment, interval: IntervalKey): string {
   return `
 from(bucket: "${BUCKET}")
   |> range(start: ${fluxDate(seg.startMs)}, stop: ${fluxDate(seg.stopMs)})
   |> filter(fn: (r) => r._measurement == "panel" and r._field == "grid_power_w")
   |> filter(fn: (r) => exists r._value)
-  |> group()
   |> aggregateWindow(every: ${fluxEvery(interval)}, fn: mean, createEmpty: false)
   |> keep(columns: ["_time", "_value"])
 `;
 }
 
-/** Grid power per bucket across every segment, or [] on failure: a panel
- *  problem must never fail the chart (the Unmonitored band just isn't drawn). */
-async function queryGridPower(segments: Segment[], interval: IntervalKey): Promise<GridPoint[]> {
+/** Re-stamp every point of one segment to min(t, seg.stopMs). The segment's last
+ *  display window can be stamped past the segment (the bucket's end, when the
+ *  seam or the live edge is not on a display boundary) or at the segment edge,
+ *  depending on how Flux clips a window after timeShift. Clamping both the
+ *  circuit and the grid rows puts every pair on one timestamp by construction.
+ *  Only a segment's final window can exceed stopMs, so this never merges two
+ *  points of a series. */
+function clampToSegment<T extends { time: string }>(rows: T[], seg: Segment): T[] {
+  return rows.map((r) => {
+    const t = Date.parse(r.time);
+    return t > seg.stopMs ? { ...r, time: new Date(seg.stopMs).toISOString() } : r;
+  });
+}
+
+/** Grid power per bucket across every segment. A panel problem must never fail
+ *  the chart, so a failure resolves `ok: false` with no points: the Unmonitored
+ *  band just isn't drawn, and the caller marks the result partial so nothing
+ *  caches it as a complete answer. */
+async function queryGridPower(
+  segments: Segment[],
+  interval: IntervalKey,
+): Promise<{ points: GridPoint[]; ok: boolean }> {
   try {
     const parts = await Promise.all(
       segments.map(async (seg) =>
-        (await queryRows(rawPanelPowerFlux(seg, interval))).map((o) => ({
-          time: String(o._time),
-          watts: Number(o._value),
-        })),
+        clampToSegment(
+          (await queryRows(rawPanelPowerFlux(seg, interval))).map((o) => ({
+            time: String(o._time),
+            watts: Number(o._value),
+          })),
+          seg,
+        ),
       ),
     );
-    return parts.flat();
+    return { points: parts.flat(), ok: true };
   } catch (e) {
     console.warn("queryGridPower failed; drawing without the Unmonitored band", e);
-    return [];
+    return { points: [], ok: false };
   }
 }
 
@@ -243,21 +265,32 @@ export async function queryLastPointTime(
  * Mean power per bucket, grouped by derived category — or, when `grouping` is a
  * drill, by circuit within one category. One row per (time, series) — pivot
  * client-side. The category view also carries an `"Unmonitored"` series (see
- * lib/unmonitoredSeries); a drill never does.
+ * lib/unmonitoredSeries); a drill never does, and `grid: false` opts out of it
+ * (no panel query at all).
+ *
+ * `partial` is true when the Unmonitored series is missing because the panel
+ * query failed: the category series are intact, but the result must not be
+ * cached as a complete answer.
  *
  * Reads the coarsest rollup that can fill the requested interval, with a raw
  * tail for the not-yet-rolled-up trailing period (see planSegments). The `name`
  * tag survives into `circuit_5m`/`circuit_1h`, so source selection is identical
  * either way.
  */
+export type PowerResult = { data: SeriesPoint[]; partial: boolean };
+
 export async function queryPower(opts: {
   fromMs: number;
   toMs: number;
   interval: IntervalKey;
   grouping?: Grouping;
+  /** Default true. False skips the panel (grid power) query and the Unmonitored
+   *  series: the Overview strip, which only sums the categories, uses it so it
+   *  does not scan a year of raw panel data on every page load. */
+  grid?: boolean;
   /** Injectable for tests; defaults to wall clock. */
   nowMs?: number;
-}): Promise<SeriesPoint[]> {
+}): Promise<PowerResult> {
   const { fromMs, toMs, interval } = opts;
   const g = opts.grouping ?? CATEGORY_GROUPING;
   const nowMs = opts.nowMs ?? Date.now();
@@ -267,28 +300,36 @@ export async function queryPower(opts: {
   const [parts, grid] = await Promise.all([
     Promise.all(
       segments.map(async (seg) => {
-        if (seg.kind === "raw") return runPowerFlux(rawPowerFlux(seg, interval, g));
+        if (seg.kind === "raw") {
+          return clampToSegment(await runPowerFlux(rawPowerFlux(seg, interval, g)), seg);
+        }
         const rows = await runPowerFlux(rollupPowerFlux(seg, interval, src, g));
         // Rollups don't exist until the Pi-side backfill runs — degrade to raw
         // rather than render an empty chart.
         if (needsRawFallback(rows.length)) {
-          return runPowerFlux(rawPowerFlux(seg, interval, g));
+          return clampToSegment(await runPowerFlux(rawPowerFlux(seg, interval, g)), seg);
         }
-        return rows;
+        return clampToSegment(rows, seg);
       }),
     ),
-    // The category view only: a drill never carries Unmonitored.
-    g.kind === "category" ? queryGridPower(segments, interval) : Promise.resolve([]),
+    // The category view only (a drill never carries Unmonitored), and only when
+    // the caller wants it.
+    g.kind === "category" && opts.grid !== false
+      ? queryGridPower(segments, interval)
+      : Promise.resolve({ points: [] as GridPoint[], ok: true }),
   ]);
   const series = parts.flat();
 
-  // Segments never share a bucket timestamp (the bulk's final window is clamped
-  // to the seam; the tail's first window ends strictly after it), so a plain
-  // concat is safe. Sort by instant, not by ISO string — RFC3339 fractional
-  // seconds don't collate.
-  return [...series, ...unmonitoredSeries(series, grid)].sort(
+  // Every segment's points are clamped to min(t, seg.stopMs) (circuit and grid
+  // alike), and only a segment's final window can exceed its stop, so a segment
+  // never holds two points of one series at one timestamp. Across segments the
+  // bulk's final window sits at the seam at most, and the tail's first window
+  // ends strictly after it, so a plain concat is safe. Sort by instant, not by
+  // ISO string — RFC3339 fractional seconds don't collate.
+  const data = [...series, ...unmonitoredSeries(series, grid.points)].sort(
     (a, b) => Date.parse(a.time) - Date.parse(b.time),
   );
+  return { data, partial: !grid.ok };
 }
 
 export type EnergyRow = {
