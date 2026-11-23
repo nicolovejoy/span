@@ -886,6 +886,62 @@ from(bucket: "{INFLUXDB_BUCKET}")
     return None
 
 
+HW_MIN_INTERVALS = 260   # of 288 five-minute hvac_mode intervals (276 on a 23-hour day)
+
+
+def _hourly_temp_flux(start: str, stop: str) -> str:
+    return f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "weather" and r._field == "temp_f")
+  |> filter(fn: (r) => exists r._value)
+  |> keep(columns: ["_time", "_value"])
+'''
+
+
+def query_hourly_temp_f(query_api, start: str, stop: str) -> list[tuple[datetime, float]]:
+    """Raw hourly outdoor temperatures (UTC times) in [start, stop). None values skipped."""
+    out = []
+    for table in query_api.query(_hourly_temp_flux(start, stop), org=INFLUXDB_ORG):
+        for rec in table.records:
+            if rec.get_value() is not None:
+                out.append((rec.get_time(), float(rec.get_value())))
+    return out
+
+
+def query_daily_temps_f(query_api, start: str, stop: str) -> dict[date, float]:
+    """Pacific-day mean outdoor temperature; days with < 20 hourly readings omitted.
+    Bucketing is done in Python (rb.daily_mean_temps) so DST days are exact and testable."""
+    return rb.daily_mean_temps(query_hourly_temp_f(query_api, start, stop), LOCAL_TZ)
+
+
+def _daily_hot_water_flux(start: str, stop: str, fn: str) -> str:
+    """`fn` is "sum" or "count". hvac_mode is stamped at interval start; aggregateWindow
+    stamps each Pacific day at its stop, which _local_day maps back to the day."""
+    return f'''import "timezone"
+option location = timezone.location(name: "{LOCAL_TZ_NAME}")
+
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: {start}, stop: {stop})
+  |> filter(fn: (r) => r._measurement == "hvac_mode" and r._field == "energy_hot_water_kwh")
+  |> filter(fn: (r) => exists r._value)
+  |> aggregateWindow(every: 1d, fn: {fn}, createEmpty: false)
+'''
+
+
+def query_daily_hot_water_kwh(query_api, start: str, stop: str) -> dict[date, float]:
+    """Hot-water kWh per Pacific day from hvac_mode, only for days with at least
+    HW_MIN_INTERVALS classified intervals (a classifier outage would understate it)."""
+    def by_day(fn: str) -> dict[date, float]:
+        out = {}
+        for table in query_api.query(_daily_hot_water_flux(start, stop, fn), org=INFLUXDB_ORG):
+            for rec in table.records:
+                out[_local_day(rec.get_time())] = float(rec.get_value() or 0.0)
+        return out
+    sums, counts = by_day("sum"), by_day("count")
+    return {d: v for d, v in sums.items() if counts.get(d, 0) >= HW_MIN_INTERVALS}
+
+
 def _merge_keyed(rows) -> list[tuple]:
     """Sum values sharing a key, ascending by key. Segment cuts land on window
     boundaries so collisions shouldn't arise — but sum rather than silently drop
@@ -1494,16 +1550,94 @@ def query_day_coverage(query_api, target_date: date) -> float:
     return 0.0
 
 
+@dataclass
+class CategoryVerdict:
+    category: str
+    action: str                              # "skip" | "clear" | "judge"
+    value: float = 0.0
+    baseline: "rb.Baseline | None" = None
+    result: "rb.AnomalyResult | None" = None  # floor already applied
+    hvac: "rb.HvacJudgement | None" = None
+
+
+def evaluate_day(target_date: date, day_cat: dict[date, dict[str, float]],
+                 hot_water_daily: dict[date, float], temps: dict[date, float],
+                 rate: float = ENERGY_RATE) -> list[CategoryVerdict]:
+    """Pure: one verdict per category, in _all_categories() order. "skip" = too few
+    baseline samples (state untouched); "clear" = Car under the full-charge cap;
+    "judge" = result is final (statistical test AND $1.50 floor)."""
+    sample_dates = rb.trailing_same_weekday_dates(target_date, 8)
+    hvac_daily = {d: cats["HVAC"] for d, cats in day_cat.items() if "HVAC" in cats}
+    out = []
+    for category in _all_categories():
+        samples = [day_cat[d][category] for d in sample_dates
+                   if d in day_cat and category in day_cat[d]]
+        if not rb.category_coverage_ok(len(samples)):
+            out.append(CategoryVerdict(category, "skip"))
+            continue
+        value = day_cat.get(target_date, {}).get(category, 0.0)
+        if category == "Car" and value <= EV_FULL_CHARGE_KWH:
+            # EV charging is legitimately irregular day-to-day (the weekly
+            # report excludes it from comparisons for the same reason) -- up
+            # to a full charge's worth is normal any day, not an anomaly.
+            out.append(CategoryVerdict(category, "clear", value))
+            continue
+        if category == "HVAC":
+            j = rb.judge_hvac(target_date, hvac_daily, hot_water_daily, temps, rate)
+            if j is not None:
+                # baseline.median = the effective expected value, so value - median = combined;
+                # mad=0/n=0 are placeholders and must not be read.
+                out.append(CategoryVerdict(category, "judge", value,
+                                           rb.Baseline(median=value - j.combined_kwh, mad=0.0, n=0),
+                                           j.result, j))
+                continue
+        baseline = rb.compute_baseline(samples)
+        result = rb.with_floor(rb.evaluate(value, baseline), value - baseline.median, rate)
+        out.append(CategoryVerdict(category, "judge", value, baseline, result))
+    return out
+
+
+def _hvac_copy(target_date: date, value: float, age: str, hvac: "rb.HvacJudgement") -> str:
+    """The HVAC block's comparison paragraphs: the headline excess, then one line per
+    part saying what it was compared against and whether it counted."""
+    c = hvac.combined_kwh
+    usd = abs(c) * ENERGY_RATE
+    more = "more" if c > 0 else "less"
+    wd = target_date.strftime("%A")
+    out = [f"<p>{age}HVAC used {value:.1f} kWh, {abs(c):.1f} kWh {more} than expected (${usd:.2f}).</p>"]
+    for p in (hvac.space, hvac.hot_water):
+        if p is None:
+            continue
+        verdict = "unusual" if p.result.is_anomalous else "within the normal range, not counted"
+        if p.name == "hot_water":
+            out.append(f"<p>Hot water: {p.value:.1f} kWh vs a normal {p.baseline.median:.1f} kWh "
+                       f"for a {wd} &mdash; {verdict}.</p>")
+        elif p.basis == "weather":
+            out.append(f"<p>Heating and cooling (all HVAC except hot water): {p.value:.1f} kWh vs an "
+                       f"average {p.baseline.median:.1f} kWh on {p.baseline.n} days at similar "
+                       f"temperature (within {rb.SIMILAR_TEMP_F:.0f}&deg;F of {hvac.temp_f:.0f}&deg;F, "
+                       f"last {rb.SIMILAR_LOOKBACK_DAYS} days) &mdash; {verdict}.</p>")
+        else:
+            out.append(f"<p>Heating and cooling (all HVAC except hot water): {p.value:.1f} kWh vs a "
+                       f"normal {p.baseline.median:.1f} kWh for a {wd} (too few days at similar "
+                       f"temperature to compare) &mdash; {verdict}.</p>")
+    return "\n".join(out)
+
+
 def render_anomaly_email(target_date: date,
                          alerts: list[tuple[str, float, "rb.Baseline", "rb.AnomalyResult"]],
                          top_circuits: dict[str, list[tuple[str, float]]],
                          mode_split: dict[str, float] | None = None,
-                         episode_since: dict[str, date] | None = None) -> tuple[str, str]:
+                         episode_since: dict[str, date] | None = None,
+                         hvac: "rb.HvacJudgement | None" = None) -> tuple[str, str]:
     """(subject, html). Subject carries the whole message — most days it's
     actionable without opening (spec: 'The anomaly email' > Content).
     `episode_since` maps category -> episode start; a missing category (or one
-    starting on target_date) reads as new, otherwise "Day N since Mon D"."""
+    starting on target_date) reads as new, otherwise "Day N since Mon D".
+    `hvac`, when given, replaces the HVAC block's generic comparison with the
+    split-and-compare copy (what the day was compared against, and the $ excess)."""
     episode_since = episode_since or {}
+    wd = target_date.strftime("%A")
 
     def episode_days(cat: str) -> int:
         since = episode_since.get(cat)
@@ -1511,7 +1645,11 @@ def render_anomaly_email(target_date: date,
 
     if len(alerts) == 1:
         cat, value, baseline, result = alerts[0]
-        if result.pct is None:
+        if cat == "HVAC" and hvac is not None:
+            c = hvac.combined_kwh
+            above = "above" if c > 0 else "below"
+            subject = f"⚡ HVAC {abs(c):.1f} kWh {above} expected (${abs(c) * ENERGY_RATE:.2f})"
+        elif result.pct is None:
             # Baseline median is 0 (e.g. a circuit that's normally idle on this
             # weekday) — a percentage vs. zero is undefined, so fall back to an
             # absolute comparison instead of rendering "inf%".
@@ -1538,9 +1676,13 @@ def render_anomaly_email(target_date: date,
         n = episode_days(cat)
         age = ("<strong>NEW today</strong> &middot; " if n <= 1 else
                f"Day {n} since {episode_since[cat].strftime('%b %-d')} &middot; ")
+        if cat == "HVAC" and hvac is not None:
+            lead = _hvac_copy(target_date, value, age, hvac)
+        else:
+            lead = (f'<p>{age}{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a\n'
+                    f'{wd} (${value * ENERGY_RATE:.2f}).</p>')
         blocks.append(f'''<h3>{_esc(cat)}</h3>
-<p>{age}{value:.1f} kWh vs a normal {baseline.median:.1f} kWh for a
-{target_date.strftime("%A")} (${value * ENERGY_RATE:.2f}).</p>
+{lead}
 {split_line}<p style="font-size:13px;color:#666;">Driven by: {circuits or "no single circuit stands out"}</p>
 <p><a href="{link}">Open {_esc(cat)} on {target_date.strftime("%A")} in the dashboard</a></p>''')
 
@@ -1558,39 +1700,43 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
         logger.warning(f"{target_date}: coverage {coverage:.0%} < 90%, suppressing all alerts")
         return
 
-    sample_dates = rb.trailing_same_weekday_dates(target_date, 8)
-    fetch_start = flux_ts(local_day_utc_range(sample_dates[0])[0])
+    fetch_start = flux_ts(local_day_utc_range(target_date - timedelta(days=rb.SIMILAR_LOOKBACK_DAYS))[0])
     fetch_stop = flux_ts(local_day_utc_range(target_date + timedelta(days=1))[0])
     rows = query_daily_circuit_counter_kwh(query_api, fetch_start, fetch_stop)
     day_cat = category_day_kwh(rows)
+    try:
+        hot_water_daily = query_daily_hot_water_kwh(query_api, fetch_start, fetch_stop)
+    except Exception as e:
+        logger.warning(f"{target_date}: hot-water query failed, HVAC judged as a whole: {e}")
+        hot_water_daily = {}
+    try:
+        temps = query_daily_temps_f(query_api, fetch_start, fetch_stop)
+    except Exception as e:
+        logger.warning(f"{target_date}: weather query failed, HVAC space on weekday baseline: {e}")
+        temps = {}
 
     alerts = []
     episode_since: dict[str, date] = {}
-    for category in _all_categories():
-        samples = [day_cat[d][category] for d in sample_dates
-                  if d in day_cat and category in day_cat[d]]
-        if not rb.category_coverage_ok(len(samples)):
-            logger.info(f"{category}: only {len(samples)}/8 baseline samples, skipping")
+    hvac_judgement = None
+    for v in evaluate_day(target_date, day_cat, hot_water_daily, temps):
+        if v.action == "skip":
+            logger.info(f"{v.category}: too few baseline samples, skipping")
             continue
-        value = day_cat.get(target_date, {}).get(category, 0.0)
-        if category == "Car" and value <= EV_FULL_CHARGE_KWH:
-            # EV charging is legitimately irregular day-to-day (the weekly
-            # report excludes it from comparisons for the same reason) -- up
-            # to a full charge's worth is normal any day, not an anomaly.
-            rb.clear_state(STATE_PATH, category)
+        if v.action == "clear":
+            rb.clear_state(STATE_PATH, v.category)
             continue
-        baseline = rb.compute_baseline(samples)
-        result = rb.evaluate(value, baseline)
-        state = rb.load_state(STATE_PATH, category)
-        if result.is_anomalous:
-            if rb.should_alert(result, state):
-                alerts.append((category, value, baseline, result))
-                rb.save_state(STATE_PATH, category, target_date, result.z)
-                since = rb.load_state(STATE_PATH, category).since
+        state = rb.load_state(STATE_PATH, v.category)
+        if v.result.is_anomalous:
+            if rb.should_alert(v.result, state):
+                alerts.append((v.category, v.value, v.baseline, v.result))
+                if v.hvac is not None:
+                    hvac_judgement = v.hvac
+                rb.save_state(STATE_PATH, v.category, target_date, v.result.z)
+                since = rb.load_state(STATE_PATH, v.category).since
                 if since is not None:
-                    episode_since[category] = since
+                    episode_since[v.category] = since
         else:
-            rb.clear_state(STATE_PATH, category)
+            rb.clear_state(STATE_PATH, v.category)
 
     if not alerts:
         return
@@ -1607,7 +1753,7 @@ def generate_anomaly_check(client: InfluxDBClient, target_date: date):
         except Exception as e:
             logger.warning(f"{target_date}: hvac_mode query failed, omitting mode split: {e}")
     subject, html = render_anomaly_email(target_date, alerts, top_circuits, mode_split,
-                                         episode_since)
+                                         episode_since, hvac=hvac_judgement)
     send_email(html, subject)
 
 

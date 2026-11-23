@@ -226,21 +226,21 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   presets (Everything / House (no car) / …), stacked chart rescaled to the selection (Total hidden
   while filtered), a headline of the selection's kWh / share / $. Build it in two steps: category level
   first, then circuits on top of the existing drill per-circuit fetch (`lib/drill.ts`
-  `drillInterval`); store what is turned *off* in the URL. **Step 1 (category level) is built on
-  branch `explorer-categories`, not merged; step 2 (circuits) is still to do.** Put the title **"Power Explorer"**
+  `drillInterval`); store what is turned *off* in the URL. **Step 1 (category level) merged
+  2026-11-23; step 2 (circuits, branch `explorer-circuits`) in progress: chart stays bands only,
+  no per-circuit lines (Nico, 2026-11-23).** Put the title **"Power Explorer"**
   prominently on the page (today the h1 reads "SPAN — power explorer"); Nico wants to recall the name.
-  (2) **Emails → option C**: built on branch `email-car-split`, not deployed. The weekly briefing's
-  three charts stack the house above zero and the car below; headline + deltas house-only, car on
-  its own line (before, the headline and deltas included the car, so charging timing swung them ~15%).
-  **Ask Nico next session:** (a) weather-aware anomaly alerts: option 1 HVAC baseline = recent
-  days within ±3°F mean outdoor temp, hot water kept on the same-weekday baseline, plus a ~$1.50
-  materiality floor on every category; option 2 regression on heating degree days; option 3 no
-  daily HVAC usage alerts, fault alerts only. Backtest options 1 and 3 over 60 days first? Context:
-  alerts on 11-19/20/22 were HVAC (cold snap); 11-23 was Appliances (+2.7 kWh of cooking, $0.34);
-  daily HVAC tracks temp loosely (11-19 at 43°F used 26 kWh, 11-20 at 38°F used 14.5). (b) Order of
-  work; suggested alerts first. (c) Apply the car-below-zero split to `/trends` too? (d) Add a
-  one-retry-on-ECONNRESET in `web/lib/influx.ts`: on 2026-11-23 17:04Z, Vercel→Influx connections were
-  reset for ~1 min, and the explorer SSR 500'd (health stayed up; Pi logs clean).
+  (2) **Emails → option C**: merged 2026-11-23, needs a `daily-report` rebuild on the Pi. The weekly
+  briefing's three charts stack the house above zero and the car below; headline + deltas
+  house-only, car on its own line (hidden on a week with no charging).
+  **Anomaly alerts (merged 2026-11-23, needs the same rebuild):** no alert unless
+  |excess| x `ENERGY_RATE` >= $1.50, every category. HVAC = space (HVAC minus `hvac_mode` hot
+  water) vs days within +-3F in the previous 60 (weekday fallback under 3) plus hot water vs the
+  weekday baseline; summed signed, floor on the sum (`report_baseline.judge_hvac`). Backtest
+  (`pi/tools/alert_backtest.py`) 09-24..11-22: 2 alerts, 10-26 and 11-19 (HVAC; old rule: 20 days).
+  June: none; the 06-14 heat-pump fault was +6.3 kWh ($0.78), not unusual, so usage alerts miss it.
+  Nico declined a separate fault rule (aux heat on a warm day) 2026-11-23; don't re-raise.
+  Also merged 2026-11-23: the `/trends` car split and a one-retry-on-ECONNRESET in `web/lib/influx.ts`.
 
 - **#26 — v1 REST API removed by SPAN on 2026-12-31. Collector CUT OVER to v2 MQTT 2026-11-05**
   (c98e7f4). Shadow-run compare (`pi/tools/compare_v2.sh`) was clean once its per-day energy check
