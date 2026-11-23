@@ -227,7 +227,7 @@ export function TrendsChart({
                   </tr>
                 )}
                 <tr className="border-t border-zinc-200 font-semibold dark:border-zinc-700">
-                  <td className="pt-1">{COPY.total}</td>
+                  <td className="pt-1">{COPY.houseTotal}</td>
                   <td className="whitespace-nowrap pt-1 text-right tabular-nums">
                     {fmt(
                       (v(hovered.layers.totalKwh) +
@@ -259,6 +259,7 @@ export function TrendsChart({
             fmtDays(p.toMs - p.fromMs),
             fmtDays(p.calendarToMs - p.fromMs),
             fmt(v(p.layers.totalKwh)),
+            null, // Task 4 passes the car figure
           )}
         </div>
       ))}
