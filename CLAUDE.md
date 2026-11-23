@@ -226,15 +226,15 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   (2) **Emails → option C**: the weekly briefing's three charts stack the house above zero and the car
   below; headline + deltas house-only, car on its own line (today the headline and deltas include
   the car, so charging timing swings them ~15%).
-  **Ask Nico next session:** (a) weather-aware anomaly alerts: option 1 HVAC baseline = recent
-  days within ±3°F mean outdoor temp, hot water kept on the same-weekday baseline, plus a ~$1.50
-  materiality floor on every category; option 2 regression on heating degree days; option 3 no
-  daily HVAC usage alerts, fault alerts only. Backtest options 1 and 3 over 60 days first? Context:
-  alerts on 11-19/20/22 were HVAC (cold snap); 11-23 was Appliances (+2.7 kWh of cooking, $0.34);
-  daily HVAC tracks temp loosely (11-19 at 43°F used 26 kWh, 11-20 at 38°F used 14.5). (b) Order of
-  work; suggested alerts first. (c) Apply the car-below-zero split to `/trends` too? (d) Add a
-  one-retry-on-ECONNRESET in `web/lib/influx.ts`: on 2026-11-23 17:04Z, Vercel→Influx connections were
-  reset for ~1 min, and the explorer SSR 500'd (health stayed up; Pi logs clean).
+  **Anomaly alerts (built 2026-11-23, branch `alert-floor`, not deployed):** no alert unless
+  |excess| x `ENERGY_RATE` >= $1.50, every category. HVAC = space (HVAC minus `hvac_mode` hot
+  water) vs days within +-3F in the previous 60 (weekday fallback under 3) plus hot water vs the
+  weekday baseline; summed signed, floor on the sum (`report_baseline.judge_hvac`). Backtest
+  (`pi/tools/alert_backtest.py`) 09-24..11-22: 2 alerts, 10-26 and 11-19 (HVAC; old rule: 20 days).
+  June: none; the 06-14 heat-pump fault was +6.3 kWh ($0.78), not unusual, so usage alerts miss it.
+  **Ask Nico:** (a) a separate fault rule (aux heat on a warm day)? (b) order of work for the 11-23
+  mocks; (c) car-below-zero split on `/trends` too? (d) one-retry-on-ECONNRESET in
+  `web/lib/influx.ts` (11-23 17:04Z Vercel->Influx resets ~1 min, explorer SSR 500'd).
 
 - **#26 — v1 REST API removed by SPAN on 2026-12-31. Collector CUT OVER to v2 MQTT 2026-11-05**
   (c98e7f4). Shadow-run compare (`pi/tools/compare_v2.sh`) was clean once its per-day energy check
