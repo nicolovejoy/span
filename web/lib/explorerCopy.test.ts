@@ -33,4 +33,10 @@ describe("explorer copy", () => {
       .toBe("Nov 2026 so far");
     expect(periodText([])).toBeNull();
   });
+  it("Unmonitored note: the subpanel as one feed, noisy at 1-minute buckets", () => {
+    expect(EXPLORER_COPY.unmonitoredNote).toMatch(/subpanel/);
+    expect(EXPLORER_COPY.unmonitoredNote).toMatch(/one feed/);
+    expect(EXPLORER_COPY.unmonitoredNote).toMatch(/1-minute/);
+    expect(EXPLORER_COPY.unmonitoredNote).not.toMatch(/no line/);
+  });
 });

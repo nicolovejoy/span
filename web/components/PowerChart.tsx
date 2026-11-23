@@ -16,7 +16,7 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import { intervalSeconds, MAX_BUCKETS, type IntervalKey } from "@/lib/interval";
-import { CATEGORY_ORDER, categoryColor } from "@/lib/drill";
+import { BAND_ORDER, categoryColor } from "@/lib/drill";
 import { padWindow, needsExtension, extendWindow } from "@/lib/panWindow";
 import { fetchSeriesCached } from "@/lib/clientFetch";
 import type { SeriesPoint } from "@/lib/influx";
@@ -182,6 +182,8 @@ function padBounds(
   return out;
 }
 
+// totalByTime sums every series in the payload, Unmonitored included, so it
+// equals the stack top.
 function shapeData(data: SeriesPoint[]) {
   const byCat = new Map<string, Map<UTCTimestamp, number>>();
   const totalByTime = new Map<UTCTimestamp, number>();
@@ -264,7 +266,7 @@ export function PowerChart({
   // This flag is the one thing cleared *before* teardown starts; every path
   // that touches a series checks it.
   const chartAliveRef = useRef(false);
-  // Stacked bands, one per category, each holding the running total up to and
+  // Stacked bands, one per band, each holding the running total up to and
   // including itself (see lib/stack).
   const catSeriesRef = useRef<Map<string, ISeriesApi<"Area">>>(new Map());
   const totalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -307,10 +309,10 @@ export function PowerChart({
   } | null>(null);
 
   // Redraw the stacked bands from the last loaded data for the current
-  // selection. A band exists only for an on category; a partly-off category's
+  // selection. A band exists only for an on band; a partly-off category's
   // band is its category series minus its off circuits (once those are loaded;
-  // until then it shows the whole category). Total is the whole-house
-  // reference and only makes sense when nothing is filtered. No refetch, no
+  // until then it shows the whole category). Total is the sum of every band
+  // (the stack top) and shows only while nothing is off. No refetch, no
   // setVisibleRange — preserves zoom.
   const applyStack = (off: OffSet) => {
     const d = dataRef.current;
@@ -320,8 +322,8 @@ export function PowerChart({
       cd && cd.loadKey === d.loadKey
         ? subtractOffCircuits(d.byCat, cd.byName, off.circuits, categorize)
         : d.byCat;
-    const layers = stackLayers(CATEGORY_ORDER, chartCategories(off), byCat, d.sortedTimes);
-    for (const cat of CATEGORY_ORDER) {
+    const layers = stackLayers(BAND_ORDER, chartCategories(off), byCat, d.sortedTimes);
+    for (const cat of BAND_ORDER) {
       const series = catSeriesRef.current.get(cat);
       if (!series) continue;
       const layer = layers.get(cat);
@@ -447,10 +449,10 @@ export function PowerChart({
     chartAliveRef.current = true;
 
     // Series draw in the order they are added, later on top. The stack's top
-    // layer (Else) is the largest cumulative value, so it goes in first, at the
-    // back, and each smaller layer paints over it. The fill is opaque enough
-    // that a band in front hides the one behind.
-    for (const cat of CATEGORY_ORDER.slice().reverse()) {
+    // layer (Unmonitored) is the largest cumulative value, so it goes in first,
+    // at the back, and each smaller layer paints over it. The fill is opaque
+    // enough that a band in front hides the one behind.
+    for (const cat of BAND_ORDER.slice().reverse()) {
       const color = categoryColor(cat);
       const s = chart.addSeries(AreaSeries, {
         lineColor: color,
