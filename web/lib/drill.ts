@@ -17,7 +17,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   HVAC: "#ef4444",
   Car: "#3b82f6",
   Lights: "#eab308",
-  Appliances: "#f59e0b",
+  Appliances: "#22c55e",
   Else: "#6b7280",
 };
 

@@ -1018,7 +1018,7 @@ def send_email(html: str, subject: str):
 
 CATEGORY_COLORS = {
     "Lights": "#f1c40f", "HVAC": "#e74c3c", "Car": "#3498db",
-    "Appliances": "#e67e22", "Else": "#16a085", "Unmonitored": "#95a5a6",
+    "Appliances": "#9b59b6", "Else": "#16a085", "Unmonitored": "#95a5a6",
 }
 
 
