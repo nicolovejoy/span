@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "SPAN power explorer",
-    short_name: "SPAN",
+    name: "Power Explorer",
+    short_name: "Power Explorer",
     description: "Home power usage by interval and category",
     start_url: "/",
     display: "standalone",
