@@ -30,7 +30,7 @@ const kwhByKey = (rows: EnergyRow[]) =>
  *  yet contribute nothing. */
 const offKwhIn = (circuitRows: EnergyRow[], off: OffSet, cat: string): number =>
   circuitRows
-    .filter((r) => r.parent === cat && !isCircuitOn(off, r.category))
+    .filter((r) => r.parent === cat && off.circuits.includes(r.category))
     .reduce((sum, r) => sum + r.kwh, 0);
 
 export function panelRows(
