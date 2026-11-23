@@ -83,7 +83,7 @@ export function WhereItWent({
         ))}
       </ul>
       <div className="flex items-center gap-1.5 text-sm">
-        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: ROW_FILL.car }} />
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: ROW_FILL.car }} />
         {COPY.carLine(fmtKwh(car.kwh), fmtUsd(car.usd))}
       </div>
       {from !== undefined && to !== undefined && (

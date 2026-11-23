@@ -77,6 +77,9 @@ export function TrendsChart({
   const hasCar = periods.some((p) => p.layers.car > 0);
   // An in-progress period is drawn at its projected full-period size.
   const scale = (p: TrendBar) => projectionFactor(p) ?? 1;
+  // House actual-so-far in the active unit; in $ mode includes the prorated base charge.
+  const houseActual = (p: TrendBar) =>
+    v(p.layers.houseKwh) + (unit === "usd" ? proratedBaseCharge(p.toMs - p.fromMs) : 0);
   const axis = trendAxis(periods, unit);
   const plotW = width - PAD.left - PAD.right;
   const plotH = HEIGHT - PAD.top - PAD.bottom;
@@ -248,6 +251,7 @@ export function TrendsChart({
             y2={y(0)}
             stroke="currentColor"
             strokeWidth={1.5}
+            pointerEvents="none"
             className="text-zinc-500"
           />
         </svg>
@@ -299,10 +303,7 @@ export function TrendsChart({
                   <tr className="text-zinc-500">
                     <td className="pr-2">{COPY.actualSoFar}</td>
                     <td className="whitespace-nowrap text-right tabular-nums">
-                      {fmt(
-                        v(hovered.layers.houseKwh) +
-                          (unit === "usd" ? proratedBaseCharge(hovered.toMs - hovered.fromMs) : 0),
-                      )}
+                      {fmt(houseActual(hovered))}
                     </td>
                   </tr>
                 )}
@@ -332,7 +333,7 @@ export function TrendsChart({
             tickLabel(p, grain),
             fmtDays(p.toMs - p.fromMs),
             fmtDays(p.calendarToMs - p.fromMs),
-            fmt(v(p.layers.houseKwh)),
+            fmt(houseActual(p)),
             p.layers.car > 0 ? fmt(v(p.layers.car)) : null,
           )}
         </div>
