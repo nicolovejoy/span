@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LAYER_ORDER, type LayerKey } from "@/lib/trendLayers";
 import type { TrendBar } from "@/lib/trendsPayload";
+import { trendAxis } from "@/lib/trendAxis";
 import { projectionFactor, type TrendGrain } from "@/lib/trends";
 import { costForKwh, proratedBaseCharge } from "@/lib/rates";
 import type { TrendUnit } from "@/lib/whereItWent";
@@ -28,15 +29,6 @@ const RADIUS = 4;
 
 export const layerFill = (k: LayerKey) =>
   k === "hvacOther" ? "url(#trend-hatch)" : `var(--trend-${k})`;
-
-/** Round the axis max up to 1/2/2.5/5 × 10^n so 4 gridlines land on round numbers. */
-function niceMax(v: number): number {
-  if (v <= 0) return 1;
-  const step = v / 4;
-  const mag = 10 ** Math.floor(Math.log10(step));
-  const nice = [1, 2, 2.5, 5, 10].find((m) => m * mag >= step)! * mag;
-  return nice * 4;
-}
 
 /** Rounded top corners, square bottom — the data end is the top. */
 function topRoundedRect(x: number, y: number, w: number, h: number, r: number) {
@@ -77,7 +69,8 @@ export function TrendsChart({
   const present = LAYER_ORDER.filter((k) => periods.some((p) => p.layers[k] > 0));
   // An in-progress period is drawn at its projected full-period size.
   const scale = (p: TrendBar) => projectionFactor(p) ?? 1;
-  const yMax = niceMax(Math.max(0, ...periods.map((p) => v(p.layers.totalKwh) * scale(p))));
+  // Interim (Task 4 moves the car below zero): house-only axis top.
+  const yMax = trendAxis(periods, unit).upMax;
   const plotW = width - PAD.left - PAD.right;
   const plotH = HEIGHT - PAD.top - PAD.bottom;
   const band = periods.length ? plotW / periods.length : plotW;
