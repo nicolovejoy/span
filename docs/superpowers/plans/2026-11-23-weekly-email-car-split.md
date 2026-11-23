@@ -49,7 +49,7 @@ The only EV special case anywhere is in the daily anomaly check (`generate_anoma
 ## Review Focus
 
 1. A day where the charger counter has kWh but the panel is zero-filled (collector gap): house day goes negative; the house week must floor at 0 and never draw a negative house bar. Test in Task 2.
-2. A week with no charging at all: no car series, no zero line, no `Car ↓` legend entry; car line reads `0.0 kWh` with no percent. Tests in Tasks 3 and 4.
+2. A week with no charging at all: no car series, no zero line, no `Car ↓` legend entry; no car line at all, even after a charging week (owner's decision: hidden whenever this week's car kWh rounds to 0.0). Tests in Tasks 3 and 4.
 3. A second circuit matching the `Car` regex (or the charger renamed in the SPAN app): it must not land in the car figures, and the operator must hear about it. Test (warning + `Else`) in Task 1.
 4. YoY once last year's data exists (first real case January 2027): both YoY windows must compare house to house. Test in Task 2.
 5. Rendering through the real matplotlib (the suite only ever sees the stub): negative bars, the abs formatters and the `↓` glyph. Covered by Task 5's sample render, checked by eye.

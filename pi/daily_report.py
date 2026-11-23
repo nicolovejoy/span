@@ -1135,9 +1135,10 @@ def render_car_line(ctx: WeeklyContext) -> str:
     """The car's own line under the house headline: kWh and $, change vs last
     week (kWh, then %), 12-week average. build_weekly_context always fills
     ctx.car (zeros when nothing charged), so "no car line" means no charging
-    this week, last week or in the 12-week average, not an empty dict."""
+    this week (kWh rounds to 0.0), whatever last week or the 12-week average
+    held, not an empty dict."""
     c = ctx.car
-    if not c or not (c["kwh"] or c["last_week_kwh"] or c["avg12_kwh"]):
+    if not c or round(c["kwh"], 1) == 0:
         return ""
     if round(c["delta_kwh"], 1) == 0:   # flat: no sign, percent or arrow
         change = "&plusmn;0.0 kWh vs last week"

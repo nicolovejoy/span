@@ -565,17 +565,30 @@ class RenderTest(unittest.TestCase):
         self.assertLess(html.index("House:"), html.index("Same week last year"))
         self.assertLess(html.index("Same week last year"), html.index("Car (EV charging"))
 
-    def test_car_line_with_a_zero_week_after_charging_has_no_percent_under_a_1kwh_base(self):
-        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 0.0, "delta_kwh": 0.0, "delta_pct": None, "avg12_kwh": 4.2}
-        line = dr.render_car_line(self.make_ctx(car=car))
-        self.assertIn("<strong>0.0 kWh</strong> ($0.00), &plusmn;0.0 kWh vs last week", line)
-        self.assertIn("12-wk avg 4.2 kWh.", line)
-        self.assertNotIn("%", line)
-
-    def test_car_line_shows_a_week_without_charging_after_a_week_with(self):
+    def test_car_line_hidden_on_a_zero_week_after_charging_in_html_and_text(self):
+        from email_kit import html_to_text
         car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.6, "delta_pct": -100.0,
                "avg12_kwh": 42.1}
-        self.assertIn("-41.6 kWh vs last week", dr.render_car_line(self.make_ctx(car=car)))
+        ctx = self.make_ctx(car=car)
+        self.assertEqual(dr.render_car_line(ctx), "")
+        html = dr.build_weekly_html(ctx)
+        self.assertNotIn("Car (EV charging, not in", html)
+        self.assertNotIn("Car (EV charging, not in", html_to_text(html))
+
+    def test_car_line_hidden_when_this_week_rounds_to_zero(self):
+        car = {"kwh": 0.04, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.56, "delta_pct": -99.9,
+               "avg12_kwh": 42.1}
+        self.assertEqual(dr.render_car_line(self.make_ctx(car=car)), "")
+
+    def test_car_line_shown_for_a_charging_week_after_a_zero_week(self):
+        from email_kit import html_to_text
+        car = {"kwh": 12.3, "cost": 1.5, "last_week_kwh": 0.0, "delta_kwh": 12.3, "delta_pct": None,
+               "avg12_kwh": 0.0}
+        ctx = self.make_ctx(car=car)
+        line = dr.render_car_line(ctx)
+        self.assertIn("<strong>12.3 kWh</strong> ($1.50), +12.3 kWh vs last week", line)
+        self.assertNotIn("%", line)
+        self.assertIn("Car (EV charging, not in", html_to_text(dr.build_weekly_html(ctx)))
 
     def test_car_line_flat_week_shows_plus_minus_zero_with_no_percent_or_arrow(self):
         # delta rounds to 0.0 at one decimal: no sign, no percent, no arrow

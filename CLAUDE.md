@@ -100,7 +100,7 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     heat/hot-water split looks off — not investigated).
     Car split (branch `email-car-split`, 2026-11-23, not deployed): the weekly briefing is house-only
     (headline, deltas, year-over-year) with the car drawn below zero in the charts and on its own line,
-    pinned to `CHARGE_CIRCUIT` in `pi/ev_circuit.py`. Preview from fixtures:
+    pinned to `CHARGE_CIRCUIT` in `pi/ev_circuit.py`; the car line is hidden on a week with no charging. Preview from fixtures:
     `pi/tools/render_sample_weekly.py OUT_DIR`.
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
