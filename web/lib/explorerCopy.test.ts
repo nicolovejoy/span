@@ -23,6 +23,10 @@ describe("explorer copy", () => {
     expect(panelSummary("house", s)).toBe("What to show · House (no car)");
     expect(panelSummary(null, { ...s, onCount: 3 })).toBe("What to show · 3 of 6 on");
   });
+  it("partly-off kWh and legend label", () => {
+    expect(EXPLORER_COPY.partKwh(100.84, 119)).toBe("100.8 of 119.0");
+    expect(EXPLORER_COPY.legendPartial("HVAC")).toBe("HVAC (part)");
+  });
   it("periodText reads the snap metadata off the first row", () => {
     const fromMs = Date.parse("2026-11-01T00:00:00-07:00");
     expect(periodText([{ category: "HVAC", kwh: 1, periodFromMs: fromMs, periodGrain: "month", periodComplete: false }]))

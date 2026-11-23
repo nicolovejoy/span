@@ -57,3 +57,45 @@ describe("panelRows", () => {
     expect(panelRows([], EVERYTHING).every((r) => r.kwh === null)).toBe(true);
   });
 });
+
+const CTRL = "Heat pump (HP) / Control";
+const hvacCircuits: EnergyRow[] = [
+  { category: "Auxiliary / Heat pump (HP)", kwh: 2.5, parent: "HVAC" },
+  { category: "Heat pump (HP)", kwh: 98.3, parent: "HVAC" },
+  { category: CTRL, kwh: 18.2, parent: "HVAC" },
+];
+const ctrlOff = { categories: [], circuits: [CTRL] };
+
+describe("circuits in the summary", () => {
+  it("an off circuit leaves the selection, not the total", () => {
+    const s = selectionSummary(rows, ctrlOff, hvacCircuits);
+    expect(s.kwh).toBeCloseTo(270.5 - 18.2);
+    expect(s.totalKwh).toBeCloseTo(270.5);
+  });
+  it("circuit rows not loaded yet subtract nothing", () => {
+    expect(selectionSummary(rows, ctrlOff, []).kwh).toBeCloseTo(270.5);
+  });
+  it("clamps a category at zero when its off circuits exceed it", () => {
+    const big = [{ category: CTRL, kwh: 500, parent: "HVAC" }];
+    expect(selectionSummary(rows, ctrlOff, big).kwh).toBeCloseTo(270.5 - 119);
+  });
+});
+
+describe("panelRows with circuits", () => {
+  it("a partly-off row carries its state, on kWh and circuits sorted by kWh", () => {
+    const hvac = panelRows(rows, ctrlOff, hvacCircuits).find((r) => r.key === "HVAC")!;
+    expect(hvac.state).toBe("partial");
+    expect(hvac.on).toBe(true);
+    expect(hvac.onKwh).toBeCloseTo(100.8);
+    expect(hvac.circuits.map((c) => [c.name, c.on])).toEqual([
+      ["Heat pump (HP)", true], [CTRL, false], ["Auxiliary / Heat pump (HP)", true],
+    ]);
+  });
+  it("on, off and missing rows", () => {
+    const p = panelRows([], { categories: ["Car"], circuits: [] });
+    expect(p.find((r) => r.key === "Car")).toMatchObject({ state: "off", kwh: null, onKwh: null, circuits: [] });
+    const q = panelRows(rows, { categories: ["Car"], circuits: [] });
+    expect(q.find((r) => r.key === "Car")!.onKwh).toBe(0);
+    expect(q.find((r) => r.key === "Lights")!.onKwh).toBeCloseTo(52.1);
+  });
+});
