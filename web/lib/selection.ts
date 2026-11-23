@@ -6,13 +6,13 @@
 // directly.
 
 import { categorize } from "./categories";
-import { CATEGORY_ORDER, categoryColor } from "./drill";
+import { BAND_ORDER, CATEGORY_ORDER, UNMONITORED, categoryColor } from "./drill";
 
 export type OffSet = { categories: string[]; circuits: string[] };
 export type CategoryState = "on" | "partial" | "off";
 
-export const UNMONITORED = "Unmonitored";
-export const SELECTABLE: readonly string[] = [...CATEGORY_ORDER, UNMONITORED];
+export { UNMONITORED };
+export const SELECTABLE: readonly string[] = BAND_ORDER;
 export const EVERYTHING: OffSet = { categories: [], circuits: [] };
 
 const canonical = (keys: Iterable<string>): string[] => {
@@ -132,14 +132,14 @@ export const onlyThese = (keys: readonly string[]): OffSet => ({
   circuits: [],
 });
 
+/** Bands drawn on the chart, bottom of the stack first. */
 export const chartCategories = (off: OffSet): string[] =>
-  CATEGORY_ORDER.filter((c) => isOn(off, c));
+  BAND_ORDER.filter((c) => isOn(off, c));
 
-/** The dotted Total line (whole house) is the reference for the full stack, so
- *  it shows unless a chart category or a circuit is off. Unmonitored has no
- *  power series: turning only it off changes the numbers, not the chart. */
+/** The dotted Total line is the sum of every band (whole house), so it shows
+ *  only while nothing is off. */
 export const showTotal = (off: OffSet): boolean =>
-  chartCategories(off).length === CATEGORY_ORDER.length && off.circuits.length === 0;
+  off.categories.length === 0 && off.circuits.length === 0;
 
 export type PresetId = "everything" | "house" | "hvac" | "car";
 export const PRESET_IDS: readonly PresetId[] = ["everything", "house", "hvac", "car"];
@@ -175,6 +175,4 @@ export const parseOff = (raw: string | undefined): OffSet => ({
 
 export const serializeOff = (off: OffSet): string => canonical(off.categories).join(",");
 
-const UNMONITORED_COLOR = "#94a3b8";
-export const selectableColor = (key: string): string =>
-  key === UNMONITORED ? UNMONITORED_COLOR : categoryColor(key);
+export const selectableColor = categoryColor;

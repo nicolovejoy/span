@@ -17,7 +17,7 @@ export const EXPLORER_COPY = {
   } as Record<PresetId, string>,
   noKwh: "—",
   unmonitoredNote:
-    "Unmonitored is the subpanel (washer, dryer, …). It counts in the totals but has no line on the chart.",
+    "Unmonitored is the subpanel (washer, dryer, …) as one feed: the panel total minus every named circuit. At 1-minute buckets it looks noisy.",
   nothingSelected: "Nothing selected",
   nothingSelectedHint: "Tick a category or pick a preset.",
   events: "Events",

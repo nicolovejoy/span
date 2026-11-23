@@ -1,6 +1,7 @@
 import {
   queryPower,
   queryEnergyByCategory,
+  type PowerResult,
   queryEvents,
   queryHvacModeIntervals,
   type Grouping,
@@ -19,11 +20,14 @@ import type { EnergyRow } from "./influx";
 // historical entries get a 24h TTL; trailing-bucket entries TTL out after
 // one bucket so newly-arrived data shows up promptly.
 
-type Entry = { data: SeriesPoint[]; expiresAt: number };
+type Entry = { data: PowerResult; expiresAt: number };
 
 export const MAX_ENTRIES = 100;
+/** A partial result (the panel query failed, so the Unmonitored series is
+ *  missing) is kept this long at most, however old its window. */
+export const PARTIAL_TTL_MS = 60_000;
 const cache = new Map<string, Entry>();
-const inflight = new Map<string, Promise<SeriesPoint[]>>();
+const inflight = new Map<string, Promise<PowerResult>>();
 
 /** "" for the category view, the category name for a drill — a drilled result
  *  is a completely different row shape and must never share an entry. */
@@ -40,8 +44,11 @@ export function makeKey(
   fromMs: number,
   toMs: number,
   drill?: string,
+  grid = true,
 ): string {
-  return `${interval}|${sourceKey(sourceForInterval(interval))}|${drillKey(drill)}|${fromMs}|${toMs}`;
+  // A drill never reads the panel, so `grid` cannot change its answer.
+  const g = grid || drill ? "g" : "ng";
+  return `${interval}|${sourceKey(sourceForInterval(interval))}|${drillKey(drill)}|${g}|${fromMs}|${toMs}`;
 }
 
 export async function cachedQueryPower(opts: {
@@ -50,8 +57,10 @@ export async function cachedQueryPower(opts: {
   interval: IntervalKey;
   /** Category to break into its individual circuits (#12). */
   drill?: string;
-}): Promise<SeriesPoint[]> {
-  const key = makeKey(opts.interval, opts.fromMs, opts.toMs, opts.drill);
+  /** Default true; false skips the Unmonitored series (and its panel query). */
+  grid?: boolean;
+}): Promise<PowerResult> {
+  const key = makeKey(opts.interval, opts.fromMs, opts.toMs, opts.drill, opts.grid);
   const now = Date.now();
 
   const hit = cache.get(key);
@@ -72,7 +81,8 @@ export async function cachedQueryPower(opts: {
 
   const promise = queryPower({ ...opts, grouping: groupingFor(opts.drill) })
     .then((data) => {
-      cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      const ttl = data.partial ? Math.min(ttlMs, PARTIAL_TTL_MS) : ttlMs;
+      cache.set(key, { data, expiresAt: Date.now() + ttl });
       while (cache.size > MAX_ENTRIES) {
         const oldest = cache.keys().next().value;
         if (oldest === undefined) break;
