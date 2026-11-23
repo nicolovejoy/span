@@ -80,10 +80,10 @@ describe("drill focuses the selection", () => {
 describe("select action", () => {
   it("a selection that keeps the drilled category on leaves the drill; one that turns it off clears it", () => {
     let s = reducer(base({ off: EVERYTHING }), { type: "drill", category: "Lights" });
-    s = reducer(s, { type: "select", off: { categories: ["Lights"] } });
+    s = reducer(s, { type: "select", off: { categories: ["Lights"], circuits: [] } });
     expect(s.drill).toBeNull();
     expect(s.offBeforeDrill).toBeNull();
-    expect(s.off).toEqual({ categories: ["Lights"] });
+    expect(s.off).toEqual({ categories: ["Lights"], circuits: [] });
   });
 });
 

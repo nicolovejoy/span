@@ -12,7 +12,7 @@ describe("buildIntentSearch (intent-only URL)", () => {
   });
 
   it("carries what is off, commas intact (not %2C)", () => {
-    expect(buildIntentSearch("7d", { categories: ["Car", "Unmonitored"] })).toBe(
+    expect(buildIntentSearch("7d", { categories: ["Car", "Unmonitored"], circuits: [] })).toBe(
       "range=7d&off=Car,Unmonitored",
     );
   });
@@ -47,8 +47,8 @@ describe("parseDrill", () => {
   });
 
   it("drops a drill the selection has turned off", () => {
-    expect(parseDrill("HVAC", { categories: ["HVAC"] })).toBeNull();
-    expect(parseDrill("HVAC", { categories: ["Car"] })).toBe("HVAC");
+    expect(parseDrill("HVAC", { categories: ["HVAC"], circuits: [] })).toBeNull();
+    expect(parseDrill("HVAC", { categories: ["Car"], circuits: [] })).toBe("HVAC");
   });
 });
 

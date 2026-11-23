@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  EVERYTHING, SELECTABLE, activePreset, chartCategories, isFiltered, isOn,
-  offFromShow, onlyThese, parseOff, presetOff, sameOff, serializeOff, showTotal, toggle,
+  EVERYTHING, SELECTABLE, activePreset, categoriesNeedingCircuits, categoryState, chartCategories,
+  isCircuitOn, isOn, offCircuitsIn, offFromShow, offKey, onlyThese, parseOff, partialCategories,
+  presetOff, pruneCircuits, sameOff, serializeOff, showTotal, toggle, toggleCircuit, withCircuits,
+  type OffSet,
 } from "./selection";
 
 describe("selectable keys", () => {
@@ -10,14 +12,13 @@ describe("selectable keys", () => {
   });
 });
 
-describe("isOn / toggle / isFiltered", () => {
+describe("isOn / toggle", () => {
   it("everything is on by default", () => {
     expect(SELECTABLE.every((k) => isOn(EVERYTHING, k))).toBe(true);
-    expect(isFiltered(EVERYTHING)).toBe(false);
   });
   it("a key not in the off list is on, including one this build has never heard of", () => {
-    expect(isOn({ categories: ["Car"] }, "Lights")).toBe(true);
-    expect(isOn({ categories: ["Car"] }, "Solar")).toBe(true);
+    expect(isOn({ categories: ["Car"], circuits: [] }, "Lights")).toBe(true);
+    expect(isOn({ categories: ["Car"], circuits: [] }, "Solar")).toBe(true);
   });
   it("toggle turns off then back on, keeping canonical order", () => {
     const a = toggle(toggle(EVERYTHING, "Unmonitored"), "Car");
@@ -34,7 +35,7 @@ describe("isOn / toggle / isFiltered", () => {
 describe("chartCategories", () => {
   it("lists on categories that have a power line, never Unmonitored", () => {
     expect(chartCategories(EVERYTHING)).toEqual(["HVAC", "Car", "Lights", "Appliances", "Else"]);
-    expect(chartCategories({ categories: ["Car"] })).toEqual(["HVAC", "Lights", "Appliances", "Else"]);
+    expect(chartCategories({ categories: ["Car"], circuits: [] })).toEqual(["HVAC", "Lights", "Appliances", "Else"]);
   });
 });
 
@@ -47,9 +48,9 @@ describe("presets", () => {
   });
   it("activePreset recognises each preset regardless of order, else null", () => {
     expect(activePreset(EVERYTHING)).toBe("everything");
-    expect(activePreset({ categories: ["Car"] })).toBe("house");
-    expect(activePreset({ categories: ["Unmonitored", "Else", "Appliances", "Lights", "Car"] })).toBe("hvac");
-    expect(activePreset({ categories: ["Car", "Lights"] })).toBeNull();
+    expect(activePreset({ categories: ["Car"], circuits: [] })).toBe("house");
+    expect(activePreset({ categories: ["Unmonitored", "Else", "Appliances", "Lights", "Car"], circuits: [] })).toBe("hvac");
+    expect(activePreset({ categories: ["Car", "Lights"], circuits: [] })).toBeNull();
   });
   it("onlyThese turns everything else off", () => {
     expect(onlyThese(["Lights"]).categories).toEqual(["HVAC", "Car", "Appliances", "Else", "Unmonitored"]);
@@ -59,7 +60,7 @@ describe("presets", () => {
 describe("URL form", () => {
   it("serialises in canonical order, empty when nothing is off", () => {
     expect(serializeOff(EVERYTHING)).toBe("");
-    expect(serializeOff({ categories: ["Unmonitored", "Car"] })).toBe("Car,Unmonitored");
+    expect(serializeOff({ categories: ["Unmonitored", "Car"], circuits: [] })).toBe("Car,Unmonitored");
   });
   it("parses, dropping unknown, duplicate and empty items", () => {
     expect(parseOff("Furnace,Car,Car,,").categories).toEqual(["Car"]);
@@ -67,7 +68,7 @@ describe("URL form", () => {
     expect(parseOff(undefined).categories).toEqual([]);
   });
   it("round-trips", () => {
-    const o = { categories: ["HVAC", "Unmonitored"] };
+    const o = { categories: ["HVAC", "Unmonitored"], circuits: [] };
     expect(sameOff(parseOff(serializeOff(o)), o)).toBe(true);
   });
 });
@@ -93,14 +94,109 @@ describe("showTotal", () => {
     expect(showTotal(EVERYTHING)).toBe(true);
   });
   it("stays shown when only Unmonitored is off (it has no power series)", () => {
-    expect(showTotal({ categories: ["Unmonitored"] })).toBe(true);
+    expect(showTotal({ categories: ["Unmonitored"], circuits: [] })).toBe(true);
   });
   it("is hidden when a chart category is off", () => {
-    expect(showTotal({ categories: ["Car"] })).toBe(false);
-    expect(showTotal({ categories: ["Car", "Unmonitored"] })).toBe(false);
+    expect(showTotal({ categories: ["Car"], circuits: [] })).toBe(false);
+    expect(showTotal({ categories: ["Car", "Unmonitored"], circuits: [] })).toBe(false);
   });
   it("is hidden when everything is off", () => {
     const none = SELECTABLE.reduce((o, k) => toggle(o, k), EVERYTHING);
     expect(showTotal(none)).toBe(false);
+  });
+});
+
+const HP = "Heat pump (HP)";
+const CTRL = "Heat pump (HP) / Control";
+const AUX = "Auxiliary / Heat pump (HP)";
+const HVAC_MEMBERS = [HP, CTRL, AUX];
+const LIV = "Lights / Living room, Upstairs";
+const os = (categories: string[], circuits: string[] = []): OffSet => ({ categories, circuits });
+
+describe("circuit state", () => {
+  it("a circuit is on unless it or its category is off", () => {
+    const off = os(["Car"], [CTRL]);
+    expect(isCircuitOn(off, HP)).toBe(true);
+    expect(isCircuitOn(off, CTRL)).toBe(false);
+    expect(isCircuitOn(off, "Tesla Car Charger")).toBe(false);
+  });
+  it("categoryState is on, partial or off", () => {
+    const off = os(["Car"], [CTRL]);
+    expect(categoryState(off, "HVAC")).toBe("partial");
+    expect(categoryState(off, "Car")).toBe("off");
+    expect(categoryState(off, "Lights")).toBe("on");
+  });
+  it("offCircuitsIn and partialCategories group circuits by category", () => {
+    const off = os([], [CTRL, LIV]);
+    expect(offCircuitsIn(off, "HVAC")).toEqual([CTRL]);
+    expect(partialCategories(off)).toEqual(["HVAC", "Lights"]);
+  });
+});
+
+describe("toggleCircuit", () => {
+  it("turns one circuit off and back on", () => {
+    const a = toggleCircuit(EVERYTHING, CTRL, HVAC_MEMBERS);
+    expect(a).toEqual(os([], [CTRL]));
+    expect(toggleCircuit(a, CTRL, HVAC_MEMBERS)).toEqual(EVERYTHING);
+  });
+  it("unticking the last on circuit turns the whole category off", () => {
+    let off = toggleCircuit(EVERYTHING, HP, HVAC_MEMBERS);
+    off = toggleCircuit(off, CTRL, HVAC_MEMBERS);
+    off = toggleCircuit(off, AUX, HVAC_MEMBERS);
+    expect(off).toEqual(os(["HVAC"]));
+  });
+  it("ticking one circuit of an off category turns on only that circuit", () => {
+    expect(toggleCircuit(os(["HVAC", "Car"]), HP, HVAC_MEMBERS)).toEqual(os(["Car"], [AUX, CTRL]));
+  });
+  it("drops this category's names that are not among its members, keeps others", () => {
+    const off = toggleCircuit(os([], ["Heat pump (old name)", LIV]), CTRL, HVAC_MEMBERS);
+    expect(off.circuits).toEqual([CTRL, LIV]);
+  });
+});
+
+describe("category toggle with circuits", () => {
+  it("a partly-off category ticks back to all on", () => {
+    expect(toggle(os([], [CTRL, LIV]), "HVAC")).toEqual(os([], [LIV]));
+  });
+  it("an all-on category turns off; an off one turns on with every circuit", () => {
+    expect(toggle(EVERYTHING, "HVAC")).toEqual(os(["HVAC"]));
+    expect(toggle(os(["HVAC"]), "HVAC")).toEqual(EVERYTHING);
+  });
+});
+
+describe("withCircuits / pruneCircuits", () => {
+  it("normalises: sorted, deduped, no empties, none in an off category", () => {
+    expect(withCircuits(os(["HVAC"]), [LIV, "", CTRL, LIV])).toEqual(os(["HVAC"], [LIV]));
+  });
+  it("prunes a category's stale names and returns the same object when nothing changes", () => {
+    const off = os([], ["Heat pump (old name)", LIV]);
+    expect(pruneCircuits(off, "HVAC", HVAC_MEMBERS)).toEqual(os([], [LIV]));
+    const clean = os([], [CTRL]);
+    expect(pruneCircuits(clean, "HVAC", HVAC_MEMBERS)).toBe(clean);
+  });
+  it("never prunes on an empty member list (a failed fetch)", () => {
+    const off = os([], [CTRL]);
+    expect(pruneCircuits(off, "HVAC", [])).toBe(off);
+  });
+});
+
+describe("whole-selection key, presets and Total with circuits", () => {
+  it("offKey and sameOff tell circuit selections apart", () => {
+    expect(offKey(EVERYTHING)).not.toBe(offKey(os([], [CTRL])));
+    expect(sameOff(os([], [CTRL, LIV]), os([], [LIV, CTRL]))).toBe(true);
+  });
+  it("no preset is active while a circuit is off, and every preset clears circuits", () => {
+    expect(activePreset(os([], [CTRL]))).toBeNull();
+    expect(activePreset(os(["Car"], [CTRL]))).toBeNull();
+    for (const id of ["everything", "house", "hvac", "car"] as const) {
+      expect(presetOff(id).circuits).toEqual([]);
+    }
+  });
+  it("Total hides when any circuit is off", () => {
+    expect(showTotal(os([], [CTRL]))).toBe(false);
+    expect(showTotal(os(["Unmonitored"]))).toBe(true);
+  });
+  it("categoriesNeedingCircuits is expanded ∪ partly off, in stack order, never Unmonitored", () => {
+    expect(categoriesNeedingCircuits(os([], [LIV]), ["Car", "HVAC", "Unmonitored"])).toEqual(["HVAC", "Car", "Lights"]);
   });
 });
