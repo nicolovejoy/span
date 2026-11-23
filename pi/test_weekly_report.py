@@ -337,6 +337,30 @@ class StackSeriesTest(unittest.TestCase):
         self.assertEqual(dr.stack_series([{"HVAC": -1.0}, {"HVAC": 2.0}], self.CATS),
                          [("HVAC", [0.0, 2.0])])
 
+    def test_car_stacks_last_and_below_zero(self):
+        series = dr.stack_series([{"HVAC": 5.0, "Car": 12.0, "Unmonitored": 1.0}], self.CATS)
+        self.assertEqual(series, [("HVAC", [5.0]), ("Unmonitored", [1.0]), ("Car", [-12.0])])
+
+    def test_draw_stacked_puts_car_under_the_zero_line(self):
+        ax = mock.MagicMock()
+        dr._draw_stacked(ax, ["a", "b"], [{"HVAC": 5.0, "Car": 12.0}, {"HVAC": 4.0, "Car": 0.0}], self.CATS, 0.7)
+        car = [c for c in ax.bar.call_args_list if c.kwargs["label"] == dr.CAR_LEGEND]
+        self.assertEqual(len(car), 1)
+        self.assertEqual(list(car[0].args[1]), [-12.0, -0.0])
+        self.assertEqual(list(car[0].kwargs["bottom"]), [0.0, 0.0])
+        ax.axhline.assert_called_once()
+        self.assertEqual(ax.axhline.call_args.args[0], 0)
+        self.assertEqual(ax.legend.call_args.kwargs["ncol"], 2)   # one row: HVAC, Car ↓
+
+    def test_no_zero_line_without_charging(self):
+        ax = mock.MagicMock()
+        dr._draw_stacked(ax, ["a"], [{"HVAC": 5.0}], self.CATS, 0.7)
+        ax.axhline.assert_not_called()
+
+    def test_tick_labels_show_magnitudes(self):
+        self.assertEqual(dr._abs_kwh_tick(-50.0, 0), "50")
+        self.assertEqual(dr._abs_cost_tick(-6.2, 0), "$6.20")
+
     def test_every_drawn_series_has_a_colour(self):
         for cat in self.CATS + ["Unmonitored"]:
             self.assertIn(cat, dr.CATEGORY_COLORS)

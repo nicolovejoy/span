@@ -1022,6 +1022,16 @@ def stray_car_circuits(rows: list[tuple[str, date, float]]) -> list[str]:
                    if display_bucket(name) == "Car" and name != CHARGE_CIRCUIT})
 
 
+def _abs_kwh_tick(v: float, _pos) -> str:
+    """Tick label for a kWh axis that runs below zero (the car): magnitudes only."""
+    return f"{abs(v):g}"
+
+
+def _abs_cost_tick(v: float, _pos) -> str:
+    """Tick label for the $ twin axis: magnitudes only."""
+    return f"${abs(v):,.2f}"
+
+
 def _add_cost_axis(ax, label: str) -> None:
     """Add a secondary $ y-axis mirroring `ax`'s primary kWh axis, using the
     flat SCL rate (energy-only, no base charge). Call after the primary
@@ -1031,7 +1041,7 @@ def _add_cost_axis(ax, label: str) -> None:
     ax2 = ax.twinx()
     ax2.set_ylim(lo * ENERGY_RATE, hi * ENERGY_RATE)
     ax2.set_ylabel(label)
-    ax2.yaxis.set_major_formatter(matplotlib.ticker.StrMethodFormatter("${x:,.2f}"))
+    ax2.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(_abs_cost_tick))
     ax2.grid(False)
 
 
@@ -1143,31 +1153,49 @@ def _delta_arrow_pct(pct: float | None, suffix: str) -> str:
            f'{arrow}{abs(pct):.0f}%{suffix}</span>')
 
 
+CAR_LEGEND = "Car ↓"
+
+
 def stack_series(periods: list[dict[str, float]], categories: list[str]) -> list[tuple[str, list[float]]]:
-    """Pure: the (name, values) series a stacked chart draws, bottom to top —
-    the circuit categories in display order, then "Unmonitored", so a bar's
-    height is the panel total. A series that is zero in every period is left
-    out: the legend lists exactly what is drawn, nothing else."""
+    """Pure: the (name, values) series a stacked chart draws. House first, bottom
+    to top — the circuit categories in display order ("Car" skipped), then
+    "Unmonitored" — so the bar's height above zero is the house total. The car
+    comes last with negated values, so it hangs below zero. A series that is
+    zero in every period is left out: the legend lists exactly what is drawn,
+    nothing else."""
     out = []
-    for cat in list(categories) + ["Unmonitored"]:
+    for cat in [c for c in categories if c != "Car"] + ["Unmonitored"]:
         vals = [max(0.0, p.get(cat, 0.0)) for p in periods]
         if any(vals):
             out.append((cat, vals))
+    car = [-max(0.0, p.get("Car", 0.0)) for p in periods]
+    if any(car):
+        out.append(("Car", car))
     return out
 
 
 def _draw_stacked(ax, labels: list[str], periods: list[dict[str, float]],
                   categories: list[str], width: float) -> None:
-    """Stacked bars + x labels + legend. The legend is one row above the plot
-    area, so it can never cover a bar, and it reads left to right in the same
-    order the bars stack bottom to top."""
+    """Stacked bars + x labels + legend. House stacks upward from zero; the car
+    hangs below it on the same axis, with a zero line between. The legend is one
+    row above the plot area, so it can never cover a bar, and it reads left to
+    right in the order the bars stack (house bottom to top, then the car)."""
     x = list(range(len(labels)))
-    bottom = [0.0] * len(labels)
+    up = [0.0] * len(labels)
+    down = [0.0] * len(labels)
     series = stack_series(periods, categories)
     for cat, vals in series:
-        ax.bar(x, vals, bottom=bottom, width=width,
-               color=CATEGORY_COLORS.get(cat, "#888"), label=cat)
-        bottom = [b + v for b, v in zip(bottom, vals)]
+        if cat == "Car":
+            ax.bar(x, vals, bottom=down, width=width,
+                   color=CATEGORY_COLORS.get(cat, "#888"), label=CAR_LEGEND)
+            down = [b + v for b, v in zip(down, vals)]
+        else:
+            ax.bar(x, vals, bottom=up, width=width,
+                   color=CATEGORY_COLORS.get(cat, "#888"), label=cat)
+            up = [b + v for b, v in zip(up, vals)]
+    if any(cat == "Car" for cat, _ in series):
+        ax.axhline(0, color="#3f3f46", linewidth=1)
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(_abs_kwh_tick))
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=8, rotation=45, ha="right")
     ax.grid(True, alpha=0.3, axis="y")
