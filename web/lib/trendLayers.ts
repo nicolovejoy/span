@@ -34,6 +34,8 @@ export type TrendLayers = {
   rest: number;
   detail: { standby: number; controls: number; unclassified: number; bath: number; other: number; unmonitored: number };
   totalKwh: number;
+  /** Everything but the car: the sum of HOUSE_LAYER_ORDER. */
+  houseKwh: number;
   residualKwh: number;
 };
 
@@ -50,6 +52,13 @@ export const LAYER_ORDER = [
 ] as const;
 
 export type LayerKey = (typeof LAYER_ORDER)[number];
+export type HouseLayerKey = Exclude<LayerKey, "car">;
+
+/** LAYER_ORDER without the car: the layers that stack above zero on /trends
+ *  (the car hangs below it). */
+export const HOUSE_LAYER_ORDER: readonly HouseLayerKey[] = LAYER_ORDER.filter(
+  (k): k is HouseLayerKey => k !== "car",
+);
 
 export function deriveLayers(e: PeriodEnergy): TrendLayers {
   const c = (k: string) => e.categories[k] ?? 0;
@@ -81,6 +90,7 @@ export function deriveLayers(e: PeriodEnergy): TrendLayers {
       unmonitored,
     },
     totalKwh: LAYER_ORDER.reduce((s, k) => s + layers[k], 0),
+    houseKwh: HOUSE_LAYER_ORDER.reduce((s, k) => s + layers[k], 0),
     residualKwh: hvac - controls - (heat + cool + hotWater + idle + ambiguous),
   };
 }

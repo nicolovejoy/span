@@ -12,6 +12,7 @@ COPY hvac_modes.py .
 COPY attribution.py .
 COPY hvac_classifier.py .
 COPY charge_detector.py .
+COPY ev_circuit.py .
 COPY weather_poller.py .
 COPY wall_connector_poller.py .
 COPY daily_report.py .

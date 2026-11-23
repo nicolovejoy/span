@@ -1,4 +1,5 @@
 import { InfluxDB } from "@influxdata/influxdb-client";
+import { withRetryOnce } from "./influxRetry";
 import type { EventItem, ModeInterval } from "./eventRuns";
 import type { IntervalKey } from "./interval";
 import { fluxEvery } from "./interval";
@@ -44,6 +45,20 @@ function makeClient() {
             "CF-Access-Client-Secret": CF_SECRET,
           }
         : undefined,
+  });
+}
+
+/** Run one Flux query and collect every row as a plain object. The whole
+ *  fetch-and-collect is the retry unit: a reset mid-stream restarts from an
+ *  empty array, and each attempt builds a fresh client (fresh connection). */
+async function queryRows(flux: string): Promise<Record<string, unknown>[]> {
+  return withRetryOnce(async () => {
+    const out: Record<string, unknown>[] = [];
+    const queryApi = makeClient().getQueryApi(ORG);
+    for await (const row of queryApi.iterateRows(flux)) {
+      out.push(row.tableMeta.toObject(row.values) as Record<string, unknown>);
+    }
+    return out;
   });
 }
 
@@ -153,10 +168,8 @@ from(bucket: "${BUCKET}")
 }
 
 async function runPowerFlux(flux: string): Promise<SeriesPoint[]> {
-  const queryApi = makeClient().getQueryApi(ORG);
   const out: SeriesPoint[] = [];
-  for await (const row of queryApi.iterateRows(flux)) {
-    const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
+  for (const o of await queryRows(flux)) {
     out.push({
       time: String(o._time),
       // `category` on the grouped-by-category pipeline, `name` on the drilled
@@ -184,10 +197,8 @@ export async function queryLastPointTime(
       |> group()
       |> last()
       |> keep(columns: ["_time"])`;
-  const rows = await makeClient()
-    .getQueryApi(ORG)
-    .collectRows<{ _time: string }>(flux);
-  return rows[0]?._time ?? null;
+  const rows = await queryRows(flux);
+  return (rows[0]?._time as string | undefined) ?? null;
 }
 
 /**
@@ -335,10 +346,8 @@ from(bucket: "${BUCKET}")
   |> group(columns: ["_start", "_stop"])
   |> integral(unit: 1h)
 `;
-  const rows = await makeClient()
-    .getQueryApi(ORG)
-    .collectRows<{ _value: number }>(flux);
-  return (rows[0]?._value ?? 0) / 1000.0;
+  const rows = await queryRows(flux);
+  return (Number(rows[0]?._value) || 0) / 1000.0;
 }
 
 /**
@@ -371,9 +380,7 @@ from(bucket: "${BUCKET}")
   |> sum()
 `;
   const sums: Record<string, number> = {};
-  const queryApi = makeClient().getQueryApi(ORG);
-  for await (const row of queryApi.iterateRows(flux)) {
-    const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
+  for (const o of await queryRows(flux)) {
     sums[String(o._field)] = Number(o._value) || 0;
   }
   return sums;
@@ -388,17 +395,13 @@ from(bucket: "${BUCKET}")
   |> group()
   |> sum()
 `;
-  const rows = await makeClient()
-    .getQueryApi(ORG)
-    .collectRows<{ _value: number }>(flux);
+  const rows = await queryRows(flux);
   return Number(rows[0]?._value) || 0;
 }
 
 async function runEnergyFlux(flux: string): Promise<EnergyRow[]> {
-  const queryApi = makeClient().getQueryApi(ORG);
   const out: EnergyRow[] = [];
-  for await (const row of queryApi.iterateRows(flux)) {
-    const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
+  for (const o of await queryRows(flux)) {
     out.push({
       // As in runPowerFlux: `category` when grouped by category, `name` when
       // drilled into one category's circuits.
@@ -493,9 +496,7 @@ from(bucket: "${BUCKET}")
   |> sort(columns: ["_time"])
 `;
   const out: ModeInterval[] = [];
-  const queryApi = makeClient().getQueryApi(ORG);
-  for await (const row of queryApi.iterateRows(flux)) {
-    const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
+  for (const o of await queryRows(flux)) {
     const mode = String(o.mode ?? "");
     out.push({
       startMs: Date.parse(String(o._time)),
@@ -523,9 +524,7 @@ from(bucket: "${BUCKET}")
   |> sort(columns: ["_time"])
 `;
   const out: EventItem[] = [];
-  const queryApi = makeClient().getQueryApi(ORG);
-  for await (const row of queryApi.iterateRows(flux)) {
-    const o = row.tableMeta.toObject(row.values) as Record<string, unknown>;
+  for (const o of await queryRows(flux)) {
     const startMs = Date.parse(String(o._time));
     const endMs = startMs + (Number(o.duration_min) || 0) * 60_000;
     if (endMs <= fromMs) continue;

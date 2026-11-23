@@ -98,6 +98,10 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     temperature as context only: a weather-adjusted "expected kWh" was tested and rejected (weekly
     heat kWh vs heating degree days, R² 0.62; similar-weather weeks differ ~4x, and January's
     heat/hot-water split looks off — not investigated).
+    Car split (branch `email-car-split`, 2026-11-23, not deployed): the weekly briefing is house-only
+    (headline, deltas, year-over-year) with the car drawn below zero in the charts and on its own line,
+    pinned to `CHARGE_CIRCUIT` in `pi/ev_circuit.py`; the car line is hidden on a week with no charging. Preview from fixtures:
+    `pi/tools/render_sample_weekly.py OUT_DIR`.
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
     `telemetry` bucket (#16)
@@ -149,7 +153,7 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 - **Breakdown table snaps to Pacific calendar periods (2026-08-28, decided over two design rounds):** the chart shows the exact zoom window, but the table describes the calendar day/week(Mon-start)/month/year nearest the view (grain from window length: ≤2d/≤14d/≤62d/else), anchored at the window's end — full period vs full prior period when historical, period-to-date vs same-elapsed-of-prior ("pace", clamped to the prior period's end) when it contains now. Headers name the period (`kWh · Aug 2026 · so far` / `vs Jul`). All pure logic + labels in `web/lib/energyWindow.ts` (`snapPeriod`, `periodLabel`, `computeDelta`), tested incl. DST + short-month clamp. Percent deltas are suppressed under a 1 kWh prior base — small denominators screamed (+137% on 1.3 kWh).
 - **Events layer (2026-09-05):** two SVG lanes under the chart (heat-pump `hvac_mode` runs; `bath_event` + `charge_event` spans) drawn inside `PowerChart` via lightweight-charts' `timeToCoordinate` plus a per-render affine time→x map from two resolved bucket anchors (`resolveAnchors` + `affineXOf`) so they track pan/zoom, plus an `EventList` under the breakdown table (rows follow the visible window, click zooms). Data from `/api/events?from&to` → `{ modes, events, modesTruncated }`; runs grouped server-side by `lib/eventRuns.ts` (pure, tested), layout in `lib/eventLanes.ts` (pure, tested). Mode runs are skipped beyond 62-day windows. `events=0` in the intent URL hides the layer; on by default. Spec: `docs/superpowers/specs/2026-09-05-explorer-events-layer-design.md`. Future de-clutter / drill-down pages: #25.
 - **`/trends` (2026-11-13):** stacked bars of energy by purpose per Pacific calendar period
-  (months default, weeks Monday-start, years) + a ranked "Where it went" panel; kWh/$ toggle.
+  (months default, weeks Monday-start, years) + a ranked "Where it went" panel; kWh/$ toggle. Since 2026-11-23 (option C, matching the weekly email) the house layers stack above zero and Car charging hangs below on the same axis (`lib/trendAxis.ts`: one tick step from the larger side, positive labels both sides); the Where-it-went total, shares and the tooltip total are house-only (`houseKwh`), the car is its own kWh + $ line, and the base charge stays with the house. Car is still the `categories.json` `Car` regex, which today matches only `Outdoor / Tesla Car Charger`, the circuit the email pins.
   Intent URL `/trends?grain=week&end=2026-10-19&sel=2026-10-12` (`grain` default month, `end` =
   anchor period, `sel` = clicked bar; an old `sel` moves `end` to it so email deep links never
   rot) — parse/build in `lib/trendsUrl.ts`. Periods in `lib/trends.ts` (13 bars ending at the
@@ -216,27 +220,27 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 **Start at `docs/roadmap.md`** — phased, dependency-ordered, each phase scoped to hand to a
 subagent. The list below is near-term mechanics; the roadmap explains ordering and why.
 
-- **Decided 2026-11-23 (not built yet).** Mocks: https://claude.ai/artifact/YQj61hizkkU4AhJ7cg7TH5
+- **Decided 2026-11-23 (item 2 built on `email-car-split`, not deployed; item 1 not built).** Mocks: https://claude.ai/artifact/YQj61hizkkU4AhJ7cg7TH5
   (A chips, B control panel, C trends with the car below zero; numbers from Nov 16–22 data).
   (1) **Power Explorer → option B**: a sidebar of category checkboxes with per-circuit boxes and kWh,
   presets (Everything / House (no car) / …), stacked chart rescaled to the selection (Total hidden
   while filtered), a headline of the selection's kWh / share / $. Build it in two steps: category level
   first, then circuits on top of the existing drill per-circuit fetch (`lib/drill.ts`
-  `drillInterval`); store what is turned *off* in the URL. **Step 1 (category level) is built on
-  branch `explorer-categories`, not merged; step 2 (circuits) is still to do.** Put the title **"Power Explorer"**
+  `drillInterval`); store what is turned *off* in the URL. **Step 1 (category level) merged
+  2026-11-23; step 2 (circuits, branch `explorer-circuits`) in progress: chart stays bands only,
+  no per-circuit lines (Nico, 2026-11-23).** Put the title **"Power Explorer"**
   prominently on the page (today the h1 reads "SPAN — power explorer"); Nico wants to recall the name.
-  (2) **Emails → option C**: the weekly briefing's three charts stack the house above zero and the car
-  below; headline + deltas house-only, car on its own line (today the headline and deltas include
-  the car, so charging timing swings them ~15%).
-  **Ask Nico next session:** (a) weather-aware anomaly alerts: option 1 HVAC baseline = recent
-  days within ±3°F mean outdoor temp, hot water kept on the same-weekday baseline, plus a ~$1.50
-  materiality floor on every category; option 2 regression on heating degree days; option 3 no
-  daily HVAC usage alerts, fault alerts only. Backtest options 1 and 3 over 60 days first? Context:
-  alerts on 11-19/20/22 were HVAC (cold snap); 11-23 was Appliances (+2.7 kWh of cooking, $0.34);
-  daily HVAC tracks temp loosely (11-19 at 43°F used 26 kWh, 11-20 at 38°F used 14.5). (b) Order of
-  work; suggested alerts first. (c) Apply the car-below-zero split to `/trends` too? (d) Add a
-  one-retry-on-ECONNRESET in `web/lib/influx.ts`: on 2026-11-23 17:04Z, Vercel→Influx connections were
-  reset for ~1 min, and the explorer SSR 500'd (health stayed up; Pi logs clean).
+  (2) **Emails → option C**: merged 2026-11-23, needs a `daily-report` rebuild on the Pi. The weekly
+  briefing's three charts stack the house above zero and the car below; headline + deltas
+  house-only, car on its own line (hidden on a week with no charging).
+  **Anomaly alerts (merged 2026-11-23, needs the same rebuild):** no alert unless
+  |excess| x `ENERGY_RATE` >= $1.50, every category. HVAC = space (HVAC minus `hvac_mode` hot
+  water) vs days within +-3F in the previous 60 (weekday fallback under 3) plus hot water vs the
+  weekday baseline; summed signed, floor on the sum (`report_baseline.judge_hvac`). Backtest
+  (`pi/tools/alert_backtest.py`) 09-24..11-22: 2 alerts, 10-26 and 11-19 (HVAC; old rule: 20 days).
+  June: none; the 06-14 heat-pump fault was +6.3 kWh ($0.78), not unusual, so usage alerts miss it.
+  Nico declined a separate fault rule (aux heat on a warm day) 2026-11-23; don't re-raise.
+  Also merged 2026-11-23: the `/trends` car split and a one-retry-on-ECONNRESET in `web/lib/influx.ts`.
 
 - **#26 — v1 REST API removed by SPAN on 2026-12-31. Collector CUT OVER to v2 MQTT 2026-11-05**
   (c98e7f4). Shadow-run compare (`pi/tools/compare_v2.sh`) was clean once its per-day energy check
@@ -309,7 +313,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `bath_event`/`charge_event`) or a shaded band on the explorer chart. The Aug 31–Sep 2 vacant
   window in that note is a ready-made calibration case.
 - **Dashboard access model** — decision pending (2026-08-13); candidate: signed-cookie unlock link in Next.js middleware. /api/health (observer endpoint, see prompt-lab uptime convention) must stay exempt.
-- **EV monthly + annual cost rollup** in daily report (request #3 from 2026-05-23 batch — last unaddressed item). Weekly section already excludes EV (per-2h-bucket subtract); EV accounting is pinned to the exact `CHARGE_CIRCUIT` name shared with `charge_detector`, not the Car regex.
+- **EV monthly + annual cost rollup** in daily report (request #3 from 2026-05-23 batch — last unaddressed item). EV accounting is pinned to the exact `CHARGE_CIRCUIT` name shared with `charge_detector`, not the Car regex.
 - **Power explorer chart E2E** (#13) — Playwright harness via a `MOCK_INFLUX` fixture mode. Plan in the issue.
 - **`weather_poller.py` has no dead-service detection.** `normal_run`'s `past_days=2` self-heals a
   single missed poll, but an outage longer than ~2 days leaves a permanent hole only a manual

@@ -89,5 +89,12 @@ class LookbackTest(unittest.TestCase):
         self.assertGreaterEqual(cd.LOOKBACK_MINUTES, 12 * 60)
 
 
+class SharedCircuitTest(unittest.TestCase):
+    def test_charge_detector_and_report_share_one_circuit_name(self):
+        import ev_circuit
+        self.assertEqual(cd.CIRCUIT_NAME, ev_circuit.CHARGE_CIRCUIT)
+        self.assertEqual(ev_circuit.CHARGE_CIRCUIT, "Outdoor / Tesla Car Charger")
+
+
 if __name__ == "__main__":
     unittest.main()
