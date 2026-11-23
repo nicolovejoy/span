@@ -12,11 +12,11 @@ const LABEL_MIN_PX = 56;
 export const MODE_COLOR: Record<Mode, string> = {
   heat: "#f97316",
   cool: "#38bdf8",
-  hot_water: "#a855f7",
+  hot_water: "#14b8a6",
   ambiguous: "#9ca3af",
 };
 export const EVENT_COLOR: Record<EventKind, string> = {
-  bath: "#a855f7",
+  bath: "#14b8a6",
   charge: "#3b82f6",
 };
 
