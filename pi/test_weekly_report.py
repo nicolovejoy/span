@@ -230,6 +230,35 @@ class HeadlineTest(unittest.TestCase):
         self.assertIsNone(stats["top_mover"])
         self.assertEqual(stats["top_mover_delta_kwh"], 0.0)
 
+    def test_top_mover_never_names_the_car(self):
+        stats = dr.headline_stats(100.0, 100.0, 100.0, 100.0,
+                                  week_cat={"HVAC": 50.0, "Car": 60.0}, last_week_cat={"HVAC": 45.0, "Car": 0.0})
+        self.assertEqual(stats["top_mover"], "HVAC")
+
+
+class CarStatsTest(unittest.TestCase):
+    WEEK = date(2026, 11, 16)
+
+    def test_car_stats_week_last_week_and_12wk_avg(self):
+        car = {self.WEEK + timedelta(days=i): 7.8 for i in range(7)}            # 54.6
+        car.update({self.WEEK - timedelta(days=7 - i): 5.94 for i in range(7)})  # 41.58 last week
+        s = dr.car_stats(car, self.WEEK)
+        self.assertAlmostEqual(s["kwh"], 54.6)
+        self.assertAlmostEqual(s["cost"], round(54.6 * dr.ENERGY_RATE, 2))
+        self.assertAlmostEqual(s["delta_kwh"], 54.6 - 41.58)
+        self.assertAlmostEqual(s["delta_pct"], (54.6 - 41.58) / 41.58 * 100)
+        self.assertAlmostEqual(s["avg12_kwh"], 41.58 / 12)
+
+    def test_no_charging_gives_zeros_and_no_percent(self):
+        s = dr.car_stats({}, self.WEEK)
+        self.assertEqual((s["kwh"], s["delta_kwh"], s["avg12_kwh"]), (0.0, 0.0, 0.0))
+        self.assertIsNone(s["delta_pct"])
+
+    def test_house_daily_is_panel_minus_car_unfloored(self):
+        d = self.WEEK
+        self.assertEqual(dr.house_daily({d: 40.0, d + timedelta(days=1): 0.0}, {d: 15.0, d + timedelta(days=1): 5.0}),
+                         {d: 25.0, d + timedelta(days=1): -5.0})
+
 
 class BaselineHelpersTest(unittest.TestCase):
     def test_data_days_skips_zero_filled_and_missing_days(self):
@@ -332,6 +361,48 @@ class BuildWeeklyContextTest(unittest.TestCase):
         with mock.patch.object(dr, "query_mean_temp_f", side_effect=RuntimeError("boom")):
             ctx = self._build([], {}, date(2026, 11, 2))
         self.assertIsNone(ctx.temp_f)
+
+    def test_headline_and_deltas_are_house_only_and_bars_reconcile(self):
+        week = date(2026, 8, 3)
+        hist = [week - timedelta(days=i) for i in range(1, 85)]   # 12 full weeks: the 12-wk avg divides by 12
+        this = [week + timedelta(days=i) for i in range(7)]
+        C = dr.CHARGE_CIRCUIT
+        # house 20/day throughout; car 0 in history, 30/day this week; panel = house + car
+        rows = ([("Heat pump", d, 15.0) for d in hist + this] + [(C, d, 30.0) for d in this])
+        panel = {**{d: 20.0 for d in hist}, **{d: 50.0 for d in this}}
+        ctx = self._build(rows, panel, week)
+        self.assertAlmostEqual(ctx.headline["kwh"], 140.0)
+        self.assertAlmostEqual(ctx.headline["cost"], dr.cost_n_days(140.0, 7))
+        for k in ("delta_vs_last_week_pct", "delta_vs_12wk_pct", "delta_vs_long_pct"):
+            self.assertAlmostEqual(ctx.headline[k], 0.0, msg=k)
+        self.assertAlmostEqual(ctx.car["kwh"], 210.0)
+        wk = ctx.trend[-1][1]
+        self.assertAlmostEqual(sum(v for c, v in wk.items() if c != "Car"), ctx.headline["kwh"])
+        self.assertAlmostEqual(wk["Car"], ctx.car["kwh"])
+        self.assertEqual([r["category"] for r in ctx.usage_rows][-2:], ["Unmonitored", "Car"])
+
+    def test_house_week_floors_at_zero_when_the_panel_is_missing(self):
+        week = date(2026, 8, 3)
+        this = [week + timedelta(days=i) for i in range(7)]
+        ctx = self._build([(dr.CHARGE_CIRCUIT, d, 10.0) for d in this], {d: 0.0 for d in this}, week)
+        self.assertEqual(ctx.headline["kwh"], 0.0)
+        self.assertAlmostEqual(ctx.car["kwh"], 70.0)
+
+    def test_yoy_compares_house_to_house(self):
+        week = date(2026, 11, 2)
+        days = [date(2025, 10, 1) + timedelta(days=i) for i in range((date(2026, 11, 9) - date(2025, 10, 1)).days)]
+        C = dr.CHARGE_CIRCUIT
+        rows = [("Heat pump", d, 10.0) for d in days] + [(C, d, 25.0 if d >= week else 0.0) for d in days]
+        ctx = self._build(rows, {d: 20.0 + (25.0 if d >= week else 0.0) for d in days}, week)
+        self.assertAlmostEqual(ctx.yoy["week"]["kwh"], 140.0)
+        self.assertAlmostEqual(ctx.headline["kwh"], 140.0)   # car's 175 kWh excluded
+
+    def test_stray_car_circuit_is_logged_and_kept_out_of_the_car(self):
+        week = date(2026, 8, 3)
+        with self.assertLogs(dr.logger, level="WARNING") as logs:
+            ctx = self._build([("Garage / EV outlet", week, 3.0)], {week: 3.0}, week)
+        self.assertIn("Garage / EV outlet", "\n".join(logs.output))
+        self.assertEqual(ctx.car["kwh"], 0.0)
 
     def test_long_run_baseline_is_an_average_week_over_days_with_data(self):
         # 70 days of history at 10 kWh/day HVAC, 20 kWh/day panel; target week doubles both.

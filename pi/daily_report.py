@@ -569,6 +569,33 @@ def _pct_delta_honest(current: float, baseline: float) -> float | None:
     return None if baseline < 1.0 else _pct_delta(current, baseline)
 
 
+def house_daily(panel_daily: dict[date, float], car_daily: dict[date, float]) -> dict[date, float]:
+    """Per-day house energy: the panel total minus the car's own circuit. Keyed
+    by `panel_daily`'s days and left unfloored, so a period's sum is floored once
+    (as unmonitored_kwh does), not day by day."""
+    return {d: kwh - car_daily.get(d, 0.0) for d, kwh in panel_daily.items()}
+
+
+def car_stats(car_daily: dict[date, float], week_start: date) -> dict:
+    """The briefing's car line: charger-circuit kWh for the target week, with its
+    energy-only cost, change vs last week and the mean of the 12 weeks before the
+    target week. Weeks are floored at zero; the % is None under a 1 kWh base."""
+    def week(ws: date) -> float:
+        return max(0.0, _sum_days(car_daily, ws, ws + timedelta(days=7)))
+
+    kwh = week(week_start)
+    last = week(week_start - timedelta(days=7))
+    trailing = [week(ws) for ws in trailing_week_starts(week_start, 12)]
+    return {
+        "kwh": kwh,
+        "cost": round(kwh * ENERGY_RATE, 2),
+        "last_week_kwh": last,
+        "delta_kwh": kwh - last,
+        "delta_pct": _pct_delta_honest(kwh, last),
+        "avg12_kwh": sum(trailing) / len(trailing),
+    }
+
+
 def range_label(lo: date, hi: date) -> str:
     """Inclusive range lo..hi as "Nov 3–9, 2025" or "Oct 20–Nov 23, 2025"."""
     if lo == hi:
@@ -606,11 +633,13 @@ def headline_stats(week_kwh: float, last_week_kwh: float, trailing12_avg_kwh: fl
                    week_cat: dict[str, float], last_week_cat: dict[str, float]) -> dict:
     """Block 1's numbers. `long_avg_week_kwh` is the average WEEK over the
     trailing 52 weeks of data (until 2026-11-13 this compared the week against
-    an average MONTH, so every delta read about -70%). Largest mover excludes
-    "Unmonitored" — it's a metering accounting row, not a category a reader can
-    act on."""
+    an average MONTH, so every delta read about -70%). Every figure here is
+    HOUSE-ONLY: the caller passes the panel total minus the car's circuit, and the
+    car is reported separately (car_stats). Largest mover excludes "Unmonitored"
+    (a metering accounting row, not a category a reader can act on) and "Car" (it
+    is not house energy, and charging timing would swamp every other mover)."""
     movers = {c: week_cat.get(c, 0.0) - last_week_cat.get(c, 0.0)
-             for c in (set(week_cat) | set(last_week_cat)) - {"Unmonitored"}}
+             for c in (set(week_cat) | set(last_week_cat)) - {"Unmonitored", "Car"}}
     top_mover = max(movers, key=lambda c: abs(movers[c])) if movers else None
     if top_mover is not None and movers[top_mover] == 0.0:
         top_mover = None   # a flat week — nothing actually moved, don't name one arbitrarily
@@ -634,7 +663,9 @@ class WeeklyContext:
     week's Monday; `rows`/`panel_daily` span the full fetch window (98 days, or
     12 months back from the target week's month if that's earlier) so the
     12-week trend, 12-month trend, and HVAC's month-over-month (Task 7) can all
-    be derived without a second Influx round trip."""
+    be derived without a second Influx round trip. The headline (kwh, cost and
+    every delta) and the yoy kWh are HOUSE-only (panel minus the car's circuit);
+    the car is `car`. usage_rows run house categories, Unmonitored, then Car."""
     week_start: date
     rows: list[tuple[str, date, float]]
     panel_daily: dict[date, float]
@@ -659,6 +690,8 @@ class WeeklyContext:
     # Year-over-year comparisons for the headline; each None until last year's
     # data exists. {"week"|"centered": {"lo", "hi", "kwh"} | None}
     yoy: dict = field(default_factory=dict)
+    # The car (CHARGE_CIRCUIT) on its own line: car_stats(). Empty = no car line.
+    car: dict = field(default_factory=dict)
 
     @property
     def date_str(self) -> str:
@@ -691,19 +724,30 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
 
     rows = query_daily_circuit_counter_kwh(query_api, fetch_start, fetch_stop)
     panel_daily = dict(query_daily_panel_kwh(query_api, fetch_start, fetch_stop))
-    day_cat = category_day_kwh(rows)
+    day_cat = category_day_kwh(rows, bucket=weekly_bucket)
     categories = _all_categories()
+    for name in stray_car_circuits(rows):
+        logger.warning("weekly briefing: %r matches the Car pattern but is not CHARGE_CIRCUIT %r; counted as house",
+                       name, CHARGE_CIRCUIT)
+    car_daily: dict[date, float] = {}
+    for name, day, kwh in rows:
+        if name == CHARGE_CIRCUIT:
+            car_daily[day] = car_daily.get(day, 0.0) + kwh
+    house = house_daily(panel_daily, car_daily)
 
     last_week_start = week_start - timedelta(days=7)
     this_week_cat = week_totals(day_cat, week_start)
     last_week_cat = week_totals(day_cat, last_week_start)
     trailing12_starts = trailing_week_starts(week_start, 12)
 
+    # Panel total (Unmonitored's basis) vs house (panel minus the car): the
+    # headline and every delta in it are house; the car is its own line.
     week_panel_kwh = _sum_days(panel_daily, week_start, week_start + timedelta(days=7))
-    last_week_panel_kwh = _sum_days(panel_daily, last_week_start, week_start)
-    trailing12_panel = [_sum_days(panel_daily, ws, ws + timedelta(days=7))
+    week_house_kwh = max(0.0, _sum_days(house, week_start, week_start + timedelta(days=7)))
+    last_week_house_kwh = max(0.0, _sum_days(house, last_week_start, week_start))
+    trailing12_house = [max(0.0, _sum_days(house, ws, ws + timedelta(days=7)))
                         for ws in trailing12_starts]
-    trailing12_avg_panel = sum(trailing12_panel) / len(trailing12_panel) if trailing12_panel else 0.0
+    trailing12_avg_house = sum(trailing12_house) / len(trailing12_house) if trailing12_house else 0.0
 
     # Long-run baseline: the average week over the 52 weeks before the target
     # week, counting only days that have data.
@@ -724,8 +768,8 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
             return None
         return _pct_delta_honest(current, max(0.0, sum(daily.get(d, 0.0) for d in win[2])))
 
-    headline = headline_stats(week_panel_kwh, last_week_panel_kwh, trailing12_avg_panel,
-                              avg_week_kwh(panel_daily, long_days), this_week_cat, last_week_cat)
+    headline = headline_stats(week_house_kwh, last_week_house_kwh, trailing12_avg_house,
+                              avg_week_kwh(house, long_days), this_week_cat, last_week_cat)
 
     yoy: dict = {}
     for key, win in yoy_win.items():
@@ -733,18 +777,17 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
             yoy[key] = None
             continue
         lo, hi, days = win
-        kwh = (sum(panel_daily.get(d, 0.0) for d in days) if key == "week"
-               else avg_week_kwh(panel_daily, days))
+        kwh = (sum(house.get(d, 0.0) for d in days) if key == "week"
+               else avg_week_kwh(house, days))
         yoy[key] = {"lo": lo, "hi": hi, "kwh": kwh}
 
     circuit_totals = circuit_week_totals(rows, week_start)
-    usage_rows = []
-    for cat in categories:
+    def category_row(cat: str) -> dict:
         kwh = this_week_cat.get(cat, 0.0)
         wk12 = [week_totals(day_cat, ws).get(cat, 0.0) for ws in trailing12_starts]
         avg12 = sum(wk12) / len(wk12) if wk12 else 0.0
         daily = cat_daily(cat)
-        usage_rows.append({
+        return {
             "category": cat,
             "kwh": kwh,
             "cost": round(kwh * ENERGY_RATE, 2),
@@ -752,8 +795,12 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
             "delta_12wk_pct": _pct_delta(kwh, avg12),
             "delta_long_pct": _pct_delta(kwh, avg_week_kwh(daily, long_days)),
             "delta_yoy_pct": yoy_pct(kwh, daily),
-            "top_circuits": category_top_circuits(rows, week_start, cat),
-        })
+            "top_circuits": category_top_circuits(rows, week_start, cat, bucket=weekly_bucket),
+        }
+
+    # House categories, then Unmonitored, then the car last (it sits below zero
+    # in the charts and is not part of the house total).
+    usage_rows = [category_row(cat) for cat in categories if cat != "Car"]
 
     def unmon_week(ws: date) -> float:
         return unmonitored_kwh(_sum_days(panel_daily, ws, ws + timedelta(days=7)),
@@ -776,6 +823,7 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
         "delta_yoy_pct": yoy_pct(unmon, unmon_daily),
         "top_circuits": [],
     })
+    usage_rows.append(category_row("Car"))
 
     # Every chart period carries "Unmonitored" next to the circuit categories, so
     # a stacked bar adds up to the panel total the headline reports.
@@ -818,6 +866,7 @@ def build_weekly_context(query_api, week_start: date) -> WeeklyContext:
         week_by_day=week_by_day, trend=trend, month_trend=month_trend,
         hvac_modes=hvac_modes, hvac_modes_prev=hvac_modes_prev,
         long_weeks=long_weeks, yoy=yoy, temp_f=temp_f, temp_f_prev=temp_f_prev,
+        car=car_stats(car_daily, week_start),
     )
 
 
