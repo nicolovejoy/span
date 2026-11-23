@@ -287,6 +287,12 @@ export function PowerChart({
   // re-subscribing.
   const onVisibleRef = useRef(onVisibleChange);
   onVisibleRef.current = onVisibleChange;
+  // Latest selection, read from the fetch callback below: a box ticked while a
+  // range load is in flight must not be overwritten by the selection captured
+  // when the load started. (The drill is deliberately not mirrored: the circuit
+  // lines drawn belong to load.drill, and a drill change starts a new load.)
+  const offRef = useRef(state.off);
+  offRef.current = state.off;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   // Every series handle below belongs to whatever chart `chartRef` holds, and
@@ -663,7 +669,7 @@ export function PowerChart({
           // Bands and the Total line's visibility come from the selection.
           // Total is hidden inside a drill: Lights' circuits are ~0.2 kW and a
           // 5 kW dotted reference flattens them into noise along the axis.
-          applyStack(state.off, load.drill);
+          applyStack(offRef.current, load.drill);
 
           // Show the preset window (a slice of the loaded one) on a reset;
           // restore the pre-setData view on an extension.
@@ -698,7 +704,7 @@ export function PowerChart({
     return () => {
       cancelled = true;
     };
-    // applyStack + state.off read fresh each run; not deps (loaded window only).
+    // applyStack reads refs; the selection comes from offRef. Not deps (loaded window only).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 

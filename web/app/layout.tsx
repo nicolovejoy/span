@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "Home power usage by interval and category",
   appleWebApp: {
     capable: true,
-    title: "SPAN",
+    title: "Power Explorer",
     statusBarStyle: "black-translucent",
   },
 };
