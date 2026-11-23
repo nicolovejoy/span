@@ -98,6 +98,10 @@ directory later means editing the unit and `systemctl daemon-reload` first.
     temperature as context only: a weather-adjusted "expected kWh" was tested and rejected (weekly
     heat kWh vs heating degree days, R² 0.62; similar-weather weeks differ ~4x, and January's
     heat/hot-water split looks off — not investigated).
+    Car split (branch `email-car-split`, 2026-11-23, not deployed): the weekly briefing is house-only
+    (headline, deltas, year-over-year) with the car drawn below zero in the charts and on its own line,
+    pinned to `CHARGE_CIRCUIT` in `pi/ev_circuit.py`; the car line is hidden on a week with no charging. Preview from fixtures:
+    `pi/tools/render_sample_weekly.py OUT_DIR`.
   - `rates.py` - TOU rate schedule for cost calculations
   - `telegraf.conf` - Host + per-container metrics (CPU/mem/disk/load/temp/docker) into the
     `telemetry` bucket (#16)
@@ -215,7 +219,7 @@ GitHub pushes via the Vercel Git integration. Pi-hosted as a Docker service
 **Start at `docs/roadmap.md`** — phased, dependency-ordered, each phase scoped to hand to a
 subagent. The list below is near-term mechanics; the roadmap explains ordering and why.
 
-- **Decided 2026-11-23 (not built yet).** Mocks: https://claude.ai/artifact/YQj61hizkkU4AhJ7cg7TH5
+- **Decided 2026-11-23 (item 2 built on `email-car-split`, not deployed; item 1 not built).** Mocks: https://claude.ai/artifact/YQj61hizkkU4AhJ7cg7TH5
   (A chips, B control panel, C trends with the car below zero; numbers from Nov 16–22 data).
   (1) **Power Explorer → option B**: a sidebar of category checkboxes with per-circuit boxes and kWh,
   presets (Everything / House (no car) / …), stacked chart rescaled to the selection (Total hidden
@@ -223,9 +227,9 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   first, then circuits on top of the existing drill per-circuit fetch (`lib/drill.ts`
   `drillInterval`); store what is turned *off* in the URL. Put the title **"Power Explorer"**
   prominently on the page (today the h1 reads "SPAN — power explorer"); Nico wants to recall the name.
-  (2) **Emails → option C**: the weekly briefing's three charts stack the house above zero and the car
-  below; headline + deltas house-only, car on its own line (today the headline and deltas include
-  the car, so charging timing swings them ~15%).
+  (2) **Emails → option C**: built on branch `email-car-split`, not deployed. The weekly briefing's
+  three charts stack the house above zero and the car below; headline + deltas house-only, car on
+  its own line (before, the headline and deltas included the car, so charging timing swung them ~15%).
   **Ask Nico next session:** (a) weather-aware anomaly alerts: option 1 HVAC baseline = recent
   days within ±3°F mean outdoor temp, hot water kept on the same-weekday baseline, plus a ~$1.50
   materiality floor on every category; option 2 regression on heating degree days; option 3 no
@@ -307,7 +311,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   `bath_event`/`charge_event`) or a shaded band on the explorer chart. The Aug 31–Sep 2 vacant
   window in that note is a ready-made calibration case.
 - **Dashboard access model** — decision pending (2026-08-13); candidate: signed-cookie unlock link in Next.js middleware. /api/health (observer endpoint, see prompt-lab uptime convention) must stay exempt.
-- **EV monthly + annual cost rollup** in daily report (request #3 from 2026-05-23 batch — last unaddressed item). Weekly section already excludes EV (per-2h-bucket subtract); EV accounting is pinned to the exact `CHARGE_CIRCUIT` name shared with `charge_detector`, not the Car regex.
+- **EV monthly + annual cost rollup** in daily report (request #3 from 2026-05-23 batch — last unaddressed item). EV accounting is pinned to the exact `CHARGE_CIRCUIT` name shared with `charge_detector`, not the Car regex.
 - **Power explorer chart E2E** (#13) — Playwright harness via a `MOCK_INFLUX` fixture mode. Plan in the issue.
 - **`weather_poller.py` has no dead-service detection.** `normal_run`'s `past_days=2` self-heals a
   single missed poll, but an outage longer than ~2 days leaves a permanent hole only a manual

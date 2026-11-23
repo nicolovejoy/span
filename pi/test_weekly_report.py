@@ -108,6 +108,23 @@ class GroupingTest(unittest.TestCase):
         ("Tesla Car Charger", date(2026, 8, 3), 10.0),
     ]
 
+    def test_weekly_bucket_pins_car_to_the_charge_circuit(self):
+        self.assertEqual(dr.weekly_bucket(dr.CHARGE_CIRCUIT), "Car")
+        self.assertEqual(dr.weekly_bucket("Garage / EV outlet"), "Else")   # regex says Car
+        self.assertEqual(dr.weekly_bucket("Heat pump (HP) / Compressor"), "HVAC")
+        self.assertEqual(dr.display_bucket("Garage / EV outlet"), "Car")   # anomaly path unchanged
+
+    def test_category_day_kwh_takes_a_bucket(self):
+        rows = [(dr.CHARGE_CIRCUIT, date(2026, 11, 16), 18.0), ("Garage / EV outlet", date(2026, 11, 16), 2.0)]
+        self.assertEqual(dr.category_day_kwh(rows, bucket=dr.weekly_bucket),
+                         {date(2026, 11, 16): {"Car": 18.0, "Else": 2.0}})
+        self.assertEqual(dr.category_day_kwh(rows), {date(2026, 11, 16): {"Car": 20.0}})
+
+    def test_stray_car_circuits_lists_regex_matches_that_are_not_the_charger(self):
+        rows = [(dr.CHARGE_CIRCUIT, date(2026, 11, 16), 1.0), ("Garage / EV outlet", date(2026, 11, 16), 1.0),
+                ("Garage / EV outlet", date(2026, 11, 17), 1.0)]
+        self.assertEqual(dr.stray_car_circuits(rows), ["Garage / EV outlet"])
+
     def test_local_week_start_is_the_monday_on_or_before(self):
         self.assertEqual(dr.local_week_start(date(2026, 8, 3)), date(2026, 8, 3))  # Monday
         self.assertEqual(dr.local_week_start(date(2026, 8, 9)), date(2026, 8, 3))  # Sunday
@@ -213,6 +230,35 @@ class HeadlineTest(unittest.TestCase):
         self.assertIsNone(stats["top_mover"])
         self.assertEqual(stats["top_mover_delta_kwh"], 0.0)
 
+    def test_top_mover_never_names_the_car(self):
+        stats = dr.headline_stats(100.0, 100.0, 100.0, 100.0,
+                                  week_cat={"HVAC": 50.0, "Car": 60.0}, last_week_cat={"HVAC": 45.0, "Car": 0.0})
+        self.assertEqual(stats["top_mover"], "HVAC")
+
+
+class CarStatsTest(unittest.TestCase):
+    WEEK = date(2026, 11, 16)
+
+    def test_car_stats_week_last_week_and_12wk_avg(self):
+        car = {self.WEEK + timedelta(days=i): 7.8 for i in range(7)}            # 54.6
+        car.update({self.WEEK - timedelta(days=7 - i): 5.94 for i in range(7)})  # 41.58 last week
+        s = dr.car_stats(car, self.WEEK)
+        self.assertAlmostEqual(s["kwh"], 54.6)
+        self.assertAlmostEqual(s["cost"], round(54.6 * dr.ENERGY_RATE, 2))
+        self.assertAlmostEqual(s["delta_kwh"], 54.6 - 41.58)
+        self.assertAlmostEqual(s["delta_pct"], (54.6 - 41.58) / 41.58 * 100)
+        self.assertAlmostEqual(s["avg12_kwh"], 41.58 / 12)
+
+    def test_no_charging_gives_zeros_and_no_percent(self):
+        s = dr.car_stats({}, self.WEEK)
+        self.assertEqual((s["kwh"], s["delta_kwh"], s["avg12_kwh"]), (0.0, 0.0, 0.0))
+        self.assertIsNone(s["delta_pct"])
+
+    def test_house_daily_is_panel_minus_car_unfloored(self):
+        d = self.WEEK
+        self.assertEqual(dr.house_daily({d: 40.0, d + timedelta(days=1): 0.0}, {d: 15.0, d + timedelta(days=1): 5.0}),
+                         {d: 25.0, d + timedelta(days=1): -5.0})
+
 
 class BaselineHelpersTest(unittest.TestCase):
     def test_data_days_skips_zero_filled_and_missing_days(self):
@@ -291,6 +337,30 @@ class StackSeriesTest(unittest.TestCase):
         self.assertEqual(dr.stack_series([{"HVAC": -1.0}, {"HVAC": 2.0}], self.CATS),
                          [("HVAC", [0.0, 2.0])])
 
+    def test_car_stacks_last_and_below_zero(self):
+        series = dr.stack_series([{"HVAC": 5.0, "Car": 12.0, "Unmonitored": 1.0}], self.CATS)
+        self.assertEqual(series, [("HVAC", [5.0]), ("Unmonitored", [1.0]), ("Car", [-12.0])])
+
+    def test_draw_stacked_puts_car_under_the_zero_line(self):
+        ax = mock.MagicMock()
+        dr._draw_stacked(ax, ["a", "b"], [{"HVAC": 5.0, "Car": 12.0}, {"HVAC": 4.0, "Car": 0.0}], self.CATS, 0.7)
+        car = [c for c in ax.bar.call_args_list if c.kwargs["label"] == dr.CAR_LEGEND]
+        self.assertEqual(len(car), 1)
+        self.assertEqual(list(car[0].args[1]), [-12.0, -0.0])
+        self.assertEqual(list(car[0].kwargs["bottom"]), [0.0, 0.0])
+        ax.axhline.assert_called_once()
+        self.assertEqual(ax.axhline.call_args.args[0], 0)
+        self.assertEqual(ax.legend.call_args.kwargs["ncol"], 2)   # one row: HVAC, Car ↓
+
+    def test_no_zero_line_without_charging(self):
+        ax = mock.MagicMock()
+        dr._draw_stacked(ax, ["a"], [{"HVAC": 5.0}], self.CATS, 0.7)
+        ax.axhline.assert_not_called()
+
+    def test_tick_labels_show_magnitudes(self):
+        self.assertEqual(dr._abs_kwh_tick(-50.0, 0), "50")
+        self.assertEqual(dr._abs_cost_tick(-6.2, 0), "$6.20")
+
     def test_every_drawn_series_has_a_colour(self):
         for cat in self.CATS + ["Unmonitored"]:
             self.assertIn(cat, dr.CATEGORY_COLORS)
@@ -315,6 +385,74 @@ class BuildWeeklyContextTest(unittest.TestCase):
         with mock.patch.object(dr, "query_mean_temp_f", side_effect=RuntimeError("boom")):
             ctx = self._build([], {}, date(2026, 11, 2))
         self.assertIsNone(ctx.temp_f)
+
+    def test_headline_and_deltas_are_house_only_and_bars_reconcile(self):
+        week = date(2026, 8, 3)
+        hist = [week - timedelta(days=i) for i in range(1, 85)]   # 12 full weeks: the 12-wk avg divides by 12
+        this = [week + timedelta(days=i) for i in range(7)]
+        C = dr.CHARGE_CIRCUIT
+        # house 20/day throughout; car 0 in history, 30/day this week; panel = house + car
+        rows = ([("Heat pump", d, 15.0) for d in hist + this] + [(C, d, 30.0) for d in this])
+        panel = {**{d: 20.0 for d in hist}, **{d: 50.0 for d in this}}
+        ctx = self._build(rows, panel, week)
+        self.assertAlmostEqual(ctx.headline["kwh"], 140.0)
+        self.assertAlmostEqual(ctx.headline["cost"], dr.cost_n_days(140.0, 7))
+        for k in ("delta_vs_last_week_pct", "delta_vs_12wk_pct", "delta_vs_long_pct"):
+            self.assertAlmostEqual(ctx.headline[k], 0.0, msg=k)
+        self.assertAlmostEqual(ctx.car["kwh"], 210.0)
+        wk = ctx.trend[-1][1]
+        self.assertAlmostEqual(sum(v for c, v in wk.items() if c != "Car"), ctx.headline["kwh"])
+        self.assertAlmostEqual(wk["Car"], ctx.car["kwh"])
+        self.assertEqual([r["category"] for r in ctx.usage_rows][-2:], ["Unmonitored", "Car"])
+
+    def test_full_fixture_reconciles_house_stack_and_car_bar(self):
+        """End to end on a multi-category year of data with an uneven car and a
+        panel that carries Unmonitored: (a) the target week's house bars plus
+        Unmonitored sum to the house headline; (b) the car bar is the car line."""
+        week = date(2026, 11, 16)
+        days = [week + timedelta(days=6) - timedelta(days=i) for i in range(400)]
+        rows, panel = [], {}
+        for d in days:
+            circuits = [("Heat pump (HP) / Compressor", 17.0 if d.weekday() >= 5 else 12.5),
+                        ("Kitchen Lights", 7.5), ("Kitchen / Oven", 3.0), ("Garage outlet", 0.5)]
+            if d.weekday() in (0, 2, 4):
+                circuits.append((dr.CHARGE_CIRCUIT, 18.0))
+            rows += [(name, d, kwh) for name, kwh in circuits]
+            panel[d] = sum(kwh for _, kwh in circuits) + 3.0   # 3.0 kWh/day Unmonitored
+        with mock.patch.object(dr, "query_hvac_mode_intervals", return_value=[]), \
+             mock.patch.object(dr, "query_mean_temp_f", return_value=44.0):
+            ctx = self._build(rows, panel, week)
+        wk = ctx.trend[-1][1]
+        self.assertGreater(wk["Unmonitored"], 0.0)
+        self.assertAlmostEqual(sum(v for c, v in wk.items() if c != "Car"),
+                               ctx.headline["kwh"], places=6)
+        self.assertAlmostEqual(wk["Car"], ctx.car["kwh"], places=6)
+        self.assertAlmostEqual(ctx.car["kwh"], 54.0)
+        car_row = next(r for r in ctx.usage_rows if r["category"] == "Car")
+        self.assertAlmostEqual(car_row["kwh"], ctx.car["kwh"], places=6)
+
+    def test_house_week_floors_at_zero_when_the_panel_is_missing(self):
+        week = date(2026, 8, 3)
+        this = [week + timedelta(days=i) for i in range(7)]
+        ctx = self._build([(dr.CHARGE_CIRCUIT, d, 10.0) for d in this], {d: 0.0 for d in this}, week)
+        self.assertEqual(ctx.headline["kwh"], 0.0)
+        self.assertAlmostEqual(ctx.car["kwh"], 70.0)
+
+    def test_yoy_compares_house_to_house(self):
+        week = date(2026, 11, 2)
+        days = [date(2025, 10, 1) + timedelta(days=i) for i in range((date(2026, 11, 9) - date(2025, 10, 1)).days)]
+        C = dr.CHARGE_CIRCUIT
+        rows = [("Heat pump", d, 10.0) for d in days] + [(C, d, 25.0 if d >= week else 0.0) for d in days]
+        ctx = self._build(rows, {d: 20.0 + (25.0 if d >= week else 0.0) for d in days}, week)
+        self.assertAlmostEqual(ctx.yoy["week"]["kwh"], 140.0)
+        self.assertAlmostEqual(ctx.headline["kwh"], 140.0)   # car's 175 kWh excluded
+
+    def test_stray_car_circuit_is_logged_and_kept_out_of_the_car(self):
+        week = date(2026, 8, 3)
+        with self.assertLogs(dr.logger, level="WARNING") as logs:
+            ctx = self._build([("Garage / EV outlet", week, 3.0)], {week: 3.0}, week)
+        self.assertIn("Garage / EV outlet", "\n".join(logs.output))
+        self.assertEqual(ctx.car["kwh"], 0.0)
 
     def test_long_run_baseline_is_an_average_week_over_days_with_data(self):
         # 70 days of history at 10 kWh/day HVAC, 20 kWh/day panel; target week doubles both.
@@ -384,6 +522,10 @@ class BuildWeeklyContextTest(unittest.TestCase):
         self.assertAlmostEqual(aug_totals.get("HVAC", 0.0), 10.0)
 
 
+CAR = {"kwh": 54.6, "cost": 6.78, "last_week_kwh": 41.6, "delta_kwh": 13.0, "delta_pct": 31.25,
+       "avg12_kwh": 42.1}
+
+
 class RenderTest(unittest.TestCase):
     def make_ctx(self, **overrides):
         base = dict(
@@ -408,6 +550,77 @@ class RenderTest(unittest.TestCase):
         html = dr.render_headline(self.make_ctx())
         self.assertIn("210.0", html.replace(",", ""))
         self.assertIn("HVAC", html)
+
+    def test_headline_is_labelled_house_and_car_has_its_own_line(self):
+        html = dr.render_headline(self.make_ctx(car=CAR))
+        self.assertIn("House: 210.0 kWh", html)
+        self.assertIn("Car (EV charging, not in the house figures): <strong>54.6 kWh</strong> ($6.78), "
+                      "+13.0 kWh vs last week", html)
+        self.assertIn("&uarr;31%", html)
+        self.assertIn("12-wk avg 42.1 kWh.", html)
+
+    def test_car_line_order_house_then_yoy_then_car(self):
+        yoy = {"week": {"lo": date(2025, 8, 4), "hi": date(2025, 8, 10), "kwh": 200.0}, "centered": None}
+        html = dr.render_headline(self.make_ctx(car=CAR, yoy=yoy))
+        self.assertLess(html.index("House:"), html.index("Same week last year"))
+        self.assertLess(html.index("Same week last year"), html.index("Car (EV charging"))
+
+    def test_car_line_hidden_on_a_zero_week_after_charging_in_html_and_text(self):
+        from email_kit import html_to_text
+        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.6, "delta_pct": -100.0,
+               "avg12_kwh": 42.1}
+        ctx = self.make_ctx(car=car)
+        self.assertEqual(dr.render_car_line(ctx), "")
+        html = dr.build_weekly_html(ctx)
+        self.assertNotIn("Car (EV charging, not in", html)
+        self.assertNotIn("Car (EV charging, not in", html_to_text(html))
+
+    def test_car_line_hidden_when_this_week_rounds_to_zero(self):
+        car = {"kwh": 0.04, "cost": 0.0, "last_week_kwh": 41.6, "delta_kwh": -41.56, "delta_pct": -99.9,
+               "avg12_kwh": 42.1}
+        self.assertEqual(dr.render_car_line(self.make_ctx(car=car)), "")
+
+    def test_car_line_shown_for_a_charging_week_after_a_zero_week(self):
+        from email_kit import html_to_text
+        car = {"kwh": 12.3, "cost": 1.5, "last_week_kwh": 0.0, "delta_kwh": 12.3, "delta_pct": None,
+               "avg12_kwh": 0.0}
+        ctx = self.make_ctx(car=car)
+        line = dr.render_car_line(ctx)
+        self.assertIn("<strong>12.3 kWh</strong> ($1.50), +12.3 kWh vs last week", line)
+        self.assertNotIn("%", line)
+        self.assertIn("Car (EV charging, not in", html_to_text(dr.build_weekly_html(ctx)))
+
+    def test_car_line_flat_week_shows_plus_minus_zero_with_no_percent_or_arrow(self):
+        # delta rounds to 0.0 at one decimal: no sign, no percent, no arrow
+        car = {"kwh": 41.64, "cost": 5.0, "last_week_kwh": 41.6, "delta_kwh": 0.04, "delta_pct": 0.1,
+               "avg12_kwh": 42.1}
+        line = dr.render_car_line(self.make_ctx(car=car))
+        self.assertIn("&plusmn;0.0 kWh vs last week &middot;", line)
+        self.assertNotIn("%", line)
+        self.assertNotIn("&uarr;", line)
+        self.assertNotIn("&darr;", line)
+        self.assertNotIn("+0.0", line)
+        self.assertNotIn("-0.0", line)
+
+    def test_car_line_hidden_when_the_car_never_charged(self):
+        # build_weekly_context always fills ctx.car, with zeros when nothing charged
+        car = {"kwh": 0.0, "cost": 0.0, "last_week_kwh": 0.0, "delta_kwh": 0.0, "delta_pct": None, "avg12_kwh": 0.0}
+        self.assertEqual(dr.render_car_line(self.make_ctx(car=car)), "")
+        self.assertNotIn("Car (EV charging", dr.render_headline(self.make_ctx(car=car)))
+
+    def test_car_line_absent_without_car_data(self):
+        self.assertEqual(dr.render_car_line(self.make_ctx()), "")
+
+    def test_usage_table_labels_the_car_row(self):
+        rows = [{"category": "Car", "kwh": 54.6, "cost": 6.78, "delta_week_pct": None, "delta_12wk_pct": None,
+                 "delta_long_pct": None, "top_circuits": []}]
+        self.assertIn("<td>Car (EV charging)</td>", dr.render_usage_table(self.make_ctx(usage_rows=rows)))
+
+    def test_plain_text_part_carries_house_and_car_numbers(self):
+        from email_kit import html_to_text
+        text = html_to_text(dr.build_weekly_html(self.make_ctx(car=CAR)))
+        self.assertIn("House: 210.0 kWh ($27.87)", text)
+        self.assertIn("Car (EV charging, not in the house figures): 54.6 kWh ($6.78), +13.0 kWh vs last week ↑31%", text)
 
     def test_render_12mo_trend_chart_smoke(self):
         html = dr.render_12mo_trend_chart(self.make_ctx())
