@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SPAN power explorer",
+  title: "Power Explorer",
   description: "Home power usage by interval and category",
   appleWebApp: {
     capable: true,

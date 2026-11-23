@@ -10,16 +10,14 @@ import { FocusToggle } from "./FocusToggle";
 import { BreakdownTable } from "./BreakdownTable";
 import { OverviewStrip } from "./OverviewStrip";
 import { EventList } from "./EventList";
+import { CategoryPanel } from "./CategoryPanel";
+import { SelectionHeadline } from "./SelectionHeadline";
 import { stepWindow } from "@/lib/brush";
 import { initView, reducer } from "@/lib/viewState";
 import { buildIntentSearch, type DashState } from "@/lib/url-state";
-import {
-  SELECTABLE,
-  isFiltered,
-  isOn,
-  offFromShow,
-  serializeOff,
-} from "@/lib/selection";
+import { activePreset, isOn, serializeOff } from "@/lib/selection";
+import { panelRows, selectionSummary } from "@/lib/selectionSummary";
+import { EXPLORER_COPY, panelSummary, periodText } from "@/lib/explorerCopy";
 import { fetchEnergyCached, fetchEventsCached, seedEnergy } from "@/lib/clientFetch";
 import { mergeDrillRows } from "@/lib/energyWindow";
 import { MODES_MAX_WINDOW_MS, type EventsPayload } from "@/lib/eventRuns";
@@ -168,11 +166,27 @@ export function ExplorerClient({
   const filtered = rows.filter((r) => isOn(view.off, r.parent ?? r.category));
   const tableRows = mergeDrillRows(filtered, circuitRows, view.drill);
 
+  // Panel and headline read the unfiltered category rows, so an off category
+  // still shows its kWh and the share has the whole house as its base.
+  const panel = panelRows(rows, view.off);
+  const summary = selectionSummary(rows, view.off);
+  const period = periodText(rows);
+  const panelProps = {
+    rows: panel,
+    off: view.off,
+    drill: view.drill,
+    period,
+    onSelect: (off: typeof view.off) => dispatch({ type: "select", off }),
+    onDrill: (category: string | null) => dispatch({ type: "drill", category }),
+  };
+
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 sm:gap-6 sm:p-6">
       <header className="focus-hide flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">SPAN — power explorer</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            {EXPLORER_COPY.title}
+          </h1>
           <a href="/trends" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
             {TRENDS_COPY.trendsLink}
           </a>
@@ -221,10 +235,6 @@ export function ExplorerClient({
       <div className="flex items-center justify-between gap-2">
         <div className="focus-hide min-w-0 flex-1">
           <QuickFilters
-            show={isFiltered(view.off) ? SELECTABLE.filter((k) => isOn(view.off, k)) : []}
-            onChange={(show) => dispatch({ type: "select", off: offFromShow(show) })}
-            drill={view.drill}
-            onDrill={(category) => dispatch({ type: "drill", category })}
             events={view.events}
             onEvents={(on) => dispatch({ type: "events", on })}
           />
@@ -232,23 +242,44 @@ export function ExplorerClient({
         <FocusToggle />
       </div>
 
-      <PowerChart
-        state={view}
-        onVisibleChange={onVisibleChange}
-        events={events}
-        eventsOn={view.events}
-      />
+      <div className="explorer-grid flex flex-col gap-4 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-6">
+        <aside className="focus-hide hidden rounded-md border border-zinc-200 p-3 dark:border-zinc-800 lg:block">
+          <CategoryPanel {...panelProps} />
+        </aside>
 
-      {/* All-history overview: the brush follows `visible` (so preset clicks and
-          pan/zoom move it too) and dragging it loads an arbitrary window. */}
-      <div className="focus-hide">
-        <OverviewStrip
-          fromMs={visible.fromMs}
-          toMs={visible.toMs}
-          onChange={(fromMs, toMs) =>
-            dispatch({ type: "window", fromMs, toMs, now: Date.now() })
-          }
-        />
+        <div className="flex min-w-0 flex-col gap-4">
+          <details className="focus-hide rounded-md border border-zinc-200 dark:border-zinc-800 lg:hidden">
+            <summary className="min-h-[44px] cursor-pointer px-3 py-3 text-sm">
+              {panelSummary(activePreset(view.off), summary)}
+            </summary>
+            <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
+              <CategoryPanel {...panelProps} />
+            </div>
+          </details>
+
+          <div className="focus-hide">
+            <SelectionHeadline summary={summary} period={period} />
+          </div>
+
+          <PowerChart
+            state={view}
+            onVisibleChange={onVisibleChange}
+            events={events}
+            eventsOn={view.events}
+          />
+
+          {/* All-history overview: the brush follows `visible` (so preset clicks and
+              pan/zoom move it too) and dragging it loads an arbitrary window. */}
+          <div className="focus-hide">
+            <OverviewStrip
+              fromMs={visible.fromMs}
+              toMs={visible.toMs}
+              onChange={(fromMs, toMs) =>
+                dispatch({ type: "window", fromMs, toMs, now: Date.now() })
+              }
+            />
+          </div>
+        </div>
       </div>
 
       <div className="focus-hide">
