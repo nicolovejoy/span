@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CATEGORY_COLORS, categoryColor } from "./drill";
+import { BAND_ORDER, CATEGORY_COLORS, CATEGORY_ORDER, categoryColor } from "./drill";
 
 describe("explorer palette", () => {
   it("Appliances is violet, matching /trends", () => {
@@ -18,5 +18,15 @@ describe("explorer palette", () => {
       if (cat === "Car") continue;
       expect(lanes.has(hex.toLowerCase()), cat).toBe(false);
     }
+  });
+});
+
+describe("chart bands", () => {
+  it("stack the five categories, then Unmonitored on top", () => {
+    expect(BAND_ORDER).toEqual([...CATEGORY_ORDER, "Unmonitored"]);
+  });
+  it("Unmonitored keeps its slate swatch, distinct from Else grey", () => {
+    expect(categoryColor("Unmonitored")).toBe("#94a3b8");
+    expect(categoryColor("Unmonitored")).not.toBe(categoryColor("Else"));
   });
 });

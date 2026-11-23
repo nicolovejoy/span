@@ -33,9 +33,29 @@ describe("isOn / toggle", () => {
 });
 
 describe("chartCategories", () => {
-  it("lists on categories that have a power line, never Unmonitored", () => {
-    expect(chartCategories(EVERYTHING)).toEqual(["HVAC", "Car", "Lights", "Appliances", "Else"]);
-    expect(chartCategories({ categories: ["Car"], circuits: [] })).toEqual(["HVAC", "Lights", "Appliances", "Else"]);
+  it("lists every on band in stack order, Unmonitored last", () => {
+    expect(chartCategories(EVERYTHING)).toEqual(["HVAC", "Car", "Lights", "Appliances", "Else", "Unmonitored"]);
+    expect(chartCategories({ categories: ["Car"], circuits: [] })).toEqual(["HVAC", "Lights", "Appliances", "Else", "Unmonitored"]);
+    expect(chartCategories({ categories: ["Unmonitored"], circuits: [] })).toEqual(["HVAC", "Car", "Lights", "Appliances", "Else"]);
+  });
+  it("only Unmonitored ticked draws only Unmonitored", () => {
+    expect(chartCategories(onlyThese(["Unmonitored"]))).toEqual(["Unmonitored"]);
+  });
+  it("presets: House keeps Unmonitored, HVAC only and Car only drop it", () => {
+    expect(chartCategories(presetOff("house"))).toEqual(["HVAC", "Lights", "Appliances", "Else", "Unmonitored"]);
+    expect(chartCategories(presetOff("hvac"))).toEqual(["HVAC"]);
+    expect(chartCategories(presetOff("car"))).toEqual(["Car"]);
+  });
+  it("legacy links: off=Unmonitored and show=… still parse to the same bands", () => {
+    expect(chartCategories(parseOff("Unmonitored"))).toEqual(["HVAC", "Car", "Lights", "Appliances", "Else"]);
+    expect(chartCategories(offFromShow(["HVAC"]))).toEqual(["HVAC"]);
+    expect(chartCategories(offFromShow(["HVAC", "Unmonitored"]))).toEqual(["HVAC", "Unmonitored"]);
+  });
+  it("Unmonitored never becomes a circuit category", () => {
+    const off = toggle(EVERYTHING, "Unmonitored");
+    expect(categoryState(off, "Unmonitored")).toBe("off");
+    expect(partialCategories(off)).toEqual([]);
+    expect(categoriesNeedingCircuits(EVERYTHING, ["Unmonitored"])).toEqual([]);
   });
 });
 
@@ -93,8 +113,8 @@ describe("showTotal", () => {
   it("is shown with everything on", () => {
     expect(showTotal(EVERYTHING)).toBe(true);
   });
-  it("stays shown when only Unmonitored is off (it has no power series)", () => {
-    expect(showTotal({ categories: ["Unmonitored"], circuits: [] })).toBe(true);
+  it("is hidden when only Unmonitored is off (it is drawn now)", () => {
+    expect(showTotal({ categories: ["Unmonitored"], circuits: [] })).toBe(false);
   });
   it("is hidden when a chart category is off", () => {
     expect(showTotal({ categories: ["Car"], circuits: [] })).toBe(false);
@@ -221,7 +241,7 @@ describe("whole-selection key, presets and Total with circuits", () => {
   });
   it("Total hides when any circuit is off", () => {
     expect(showTotal(os([], [CTRL]))).toBe(false);
-    expect(showTotal(os(["Unmonitored"]))).toBe(true);
+    expect(showTotal(os(["Unmonitored"]))).toBe(false);
   });
   it("categoriesNeedingCircuits is expanded ∪ partly off, in stack order, never Unmonitored", () => {
     expect(categoriesNeedingCircuits(os([], [LIV]), ["Car", "HVAC", "Unmonitored"])).toEqual(["HVAC", "Car", "Lights"]);
