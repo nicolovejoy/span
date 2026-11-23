@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Pure baseline math for the daily anomaly check: median/MAD, weekday
-bucketing, and the anomaly trigger. No Influx, no email — daily_report.py owns
+bucketing, the anomaly trigger, the $ materiality floor, and weather-matched
+(similar outdoor temperature) baselines. No Influx, no email — daily_report.py owns
 all I/O and calls into this module. See
 docs/superpowers/specs/2026-08-21-weekly-energy-report-design.md ("The anomaly
 email")."""
 
 import json
-from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
+
+MATERIALITY_FLOOR_USD = 1.50
+SIMILAR_TEMP_F = 3.0          # ± band, inclusive
+SIMILAR_LOOKBACK_DAYS = 60    # target-60 .. target-1
+SIMILAR_MIN_DAYS = 3
+MIN_TEMP_HOURS = 20           # hourly readings needed for a day's mean
 
 
 def median(values: list[float]) -> float:
@@ -60,6 +67,54 @@ def evaluate(value: float, baseline: Baseline) -> AnomalyResult:
     z = (value - m) / baseline.mad
     floor = max(0.20 * m, 1.0)
     return AnomalyResult(is_anomalous=(abs(z) > 3 and diff > floor), z=z, pct=pct)
+
+
+def material(excess_kwh: float, rate: float, floor_usd: float = MATERIALITY_FLOOR_USD) -> bool:
+    """True when the excess, priced at `rate` and rounded to cents, is at least the floor.
+    Sign-agnostic: a below-normal day is judged on its shortfall."""
+    return round(abs(excess_kwh) * rate, 2) >= floor_usd
+
+
+def with_floor(result: AnomalyResult, excess_kwh: float, rate: float,
+               floor_usd: float = MATERIALITY_FLOOR_USD) -> AnomalyResult:
+    """`result` with is_anomalous ANDed with material(); z and pct unchanged."""
+    return replace(result, is_anomalous=result.is_anomalous and material(excess_kwh, rate, floor_usd))
+
+
+def daily_mean_temps(points: list[tuple[datetime, float]], tz: tzinfo,
+                     min_hours: int = MIN_TEMP_HOURS) -> dict[date, float]:
+    """Mean of hourly readings per local calendar day of `tz`. Days with fewer than
+    `min_hours` readings are omitted. `points` are tz-aware datetimes (UTC from Influx)."""
+    by_day: dict[date, list[float]] = {}
+    for t, v in points:
+        by_day.setdefault(t.astimezone(tz).date(), []).append(v)
+    return {d: sum(vs) / len(vs) for d, vs in by_day.items() if len(vs) >= min_hours}
+
+
+def similar_temp_days(target: date, temps: dict[date, float], eligible: set[date],
+                      tol_f: float = SIMILAR_TEMP_F,
+                      lookback_days: int = SIMILAR_LOOKBACK_DAYS) -> list[date]:
+    """Days in [target - lookback_days, target - 1] that are in `eligible`, have a temperature,
+    and whose temperature is within ±tol_f (inclusive) of the target's. Oldest first.
+    [] when the target has no temperature."""
+    if target not in temps:
+        return []
+    t0 = temps[target]
+    out = []
+    for k in range(lookback_days, 0, -1):
+        d = target - timedelta(days=k)
+        if d in eligible and d in temps and abs(temps[d] - t0) <= tol_f:
+            out.append(d)
+    return out
+
+
+def weather_matched_baseline(samples: list[float],
+                             min_days: int = SIMILAR_MIN_DAYS) -> Baseline | None:
+    """Center = mean of samples, spread = mad(samples) (about their median), n = len.
+    None with fewer than min_days samples (caller falls back to the weekday baseline)."""
+    if len(samples) < min_days:
+        return None
+    return Baseline(median=sum(samples) / len(samples), mad=mad(samples), n=len(samples))
 
 
 def trailing_same_weekday_dates(target: date, n: int = 8) -> list[date]:

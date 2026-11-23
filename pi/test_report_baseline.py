@@ -4,10 +4,14 @@
 import json
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import report_baseline as rb
+
+PT = ZoneInfo("America/Los_Angeles")
+UTC = timezone.utc
 
 
 class MedianMadTest(unittest.TestCase):
@@ -212,6 +216,108 @@ class CoverageGapTest(unittest.TestCase):
         """spec, 'Guard: coverage check' — a collector outage must not be
         reported as an anomaly in every category."""
         self.assertFalse(rb.day_coverage_ok(0.40))  # caller suppresses the whole day
+
+
+class MaterialityFloorTest(unittest.TestCase):
+    RATE = 0.1241
+
+    def test_floor_at_rounded_cents(self):
+        self.assertTrue(rb.material(12.1, self.RATE))    # $1.5016 -> $1.50
+        self.assertTrue(rb.material(12.05, self.RATE))   # $1.4954 -> $1.50
+        self.assertFalse(rb.material(12.0, self.RATE))   # $1.4892 -> $1.49
+
+    def test_floor_is_sign_agnostic(self):
+        self.assertTrue(rb.material(-13.0, self.RATE))
+        self.assertFalse(rb.material(-5.0, self.RATE))
+
+    def test_zero_excess_is_not_material(self):
+        self.assertFalse(rb.material(0.0, self.RATE))
+
+    def test_custom_floor_and_rate(self):
+        self.assertTrue(rb.material(1.5, 1.0, floor_usd=1.50))
+        self.assertFalse(rb.material(1.4, 1.0, floor_usd=1.50))
+
+    def test_with_floor_keeps_z_and_pct(self):
+        b = rb.compute_baseline([9, 10, 11, 10, 9, 11, 10, 9])
+        r = rb.evaluate(16.0, b)                 # anomalous, +6 kWh
+        self.assertTrue(r.is_anomalous)
+        f = rb.with_floor(r, 6.0, self.RATE)
+        self.assertFalse(f.is_anomalous)         # $0.74 < $1.50
+        self.assertEqual((f.z, f.pct), (r.z, r.pct))
+
+    def test_with_floor_never_creates_an_anomaly(self):
+        b = rb.compute_baseline([9, 10, 11, 10, 9, 11, 10, 9])
+        r = rb.evaluate(11.0, b)                 # normal
+        self.assertFalse(rb.with_floor(r, 50.0, self.RATE).is_anomalous)
+
+    def test_below_normal_day_over_floor_stays_anomalous(self):
+        b = rb.compute_baseline([19, 20, 21, 20, 19, 21, 20, 19])
+        r = rb.evaluate(7.0, b)                  # -13 kWh, z -8.77
+        self.assertTrue(rb.with_floor(r, 7.0 - b.median, self.RATE).is_anomalous)
+
+
+class DailyMeanTempsTest(unittest.TestCase):
+    def test_pacific_day_boundaries(self):
+        # 2026-08-18 PDT runs 07:00Z .. 07:00Z next day
+        pts = [(datetime(2026, 8, 18, 7, tzinfo=UTC) + timedelta(hours=h), 60.0 + h % 2)
+               for h in range(24)]
+        pts.append((datetime(2026, 8, 18, 6, 59, tzinfo=UTC), 99.0))   # 23:59 on 8-17
+        out = rb.daily_mean_temps(pts, PT)
+        self.assertAlmostEqual(out[date(2026, 8, 18)], 60.5)
+        self.assertNotIn(date(2026, 8, 17), out)                       # 1 reading < 20
+
+    def test_drops_days_with_too_few_readings(self):
+        pts = [(datetime(2026, 8, 18, 7, tzinfo=UTC) + timedelta(hours=h), 50.0)
+               for h in range(19)]
+        self.assertEqual(rb.daily_mean_temps(pts, PT), {})
+        self.assertEqual(rb.daily_mean_temps(pts, PT, min_hours=19), {date(2026, 8, 18): 50.0})
+
+    def test_dst_fall_back_day_has_25_hours(self):
+        # 2026-11-01 starts 07:00Z (PDT) and ends 08:00Z on 11-02 (PST)
+        start = datetime(2026, 11, 1, 7, tzinfo=UTC)
+        pts = [(start + timedelta(hours=h), 40.0) for h in range(25)]
+        pts.append((datetime(2026, 11, 2, 8, tzinfo=UTC), 99.0))
+        out = rb.daily_mean_temps(pts, PT, min_hours=1)
+        self.assertEqual(out[date(2026, 11, 1)], 40.0)
+        self.assertEqual(out[date(2026, 11, 2)], 99.0)
+
+    def test_empty(self):
+        self.assertEqual(rb.daily_mean_temps([], PT), {})
+
+
+class SimilarTempDaysTest(unittest.TestCase):
+    T = date(2026, 11, 19)
+
+    def test_band_is_inclusive_and_oldest_first(self):
+        d1, d2, d3 = self.T - timedelta(days=10), self.T - timedelta(days=5), self.T - timedelta(days=2)
+        temps = {self.T: 50.0, d1: 53.0, d2: 47.0, d3: 53.01}
+        self.assertEqual(rb.similar_temp_days(self.T, temps, {d1, d2, d3}), [d1, d2])
+
+    def test_lookback_window_edges(self):
+        d60, d61 = self.T - timedelta(days=60), self.T - timedelta(days=61)
+        temps = {self.T: 50.0, d60: 50.0, d61: 50.0}
+        self.assertEqual(rb.similar_temp_days(self.T, temps, {d60, d61}), [d60])
+
+    def test_excludes_target_future_and_ineligible(self):
+        prev, fut, inel = self.T - timedelta(days=1), self.T + timedelta(days=1), self.T - timedelta(days=3)
+        temps = {self.T: 50.0, prev: 50.0, fut: 50.0, inel: 50.0}
+        self.assertEqual(rb.similar_temp_days(self.T, temps, {self.T, prev, fut}), [prev])
+
+    def test_target_without_temperature(self):
+        prev = self.T - timedelta(days=1)
+        self.assertEqual(rb.similar_temp_days(self.T, {prev: 50.0}, {prev}), [])
+
+
+class WeatherMatchedBaselineTest(unittest.TestCase):
+    def test_mean_center_mad_spread(self):
+        b = rb.weather_matched_baseline([10.0, 12.0, 20.0])
+        self.assertAlmostEqual(b.median, 14.0)          # the mean, held in .median
+        self.assertAlmostEqual(b.mad, 2.9652)           # 1.4826 * median(|x - 12|)
+        self.assertEqual(b.n, 3)
+
+    def test_too_few_days(self):
+        self.assertIsNone(rb.weather_matched_baseline([10.0, 12.0]))
+        self.assertIsNone(rb.weather_matched_baseline([]))
 
 
 if __name__ == "__main__":
