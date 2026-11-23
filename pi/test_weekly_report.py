@@ -405,6 +405,30 @@ class BuildWeeklyContextTest(unittest.TestCase):
         self.assertAlmostEqual(wk["Car"], ctx.car["kwh"])
         self.assertEqual([r["category"] for r in ctx.usage_rows][-2:], ["Unmonitored", "Car"])
 
+    def test_full_fixture_reconciles_house_stack_and_car_bar(self):
+        """End to end on a multi-category year of data with an uneven car and a
+        panel that carries Unmonitored: (a) the target week's house bars plus
+        Unmonitored sum to the house headline; (b) the car bar is the car line."""
+        week = date(2026, 11, 16)
+        days = [week + timedelta(days=6) - timedelta(days=i) for i in range(400)]
+        rows, panel = [], {}
+        for d in days:
+            circuits = [("Heat pump (HP) / Compressor", 17.0 if d.weekday() >= 5 else 12.5),
+                        ("Kitchen Lights", 7.5), ("Kitchen / Oven", 3.0), ("Garage outlet", 0.5)]
+            if d.weekday() in (0, 2, 4):
+                circuits.append((dr.CHARGE_CIRCUIT, 18.0))
+            rows += [(name, d, kwh) for name, kwh in circuits]
+            panel[d] = sum(kwh for _, kwh in circuits) + 3.0   # 3.0 kWh/day Unmonitored
+        with mock.patch.object(dr, "query_hvac_mode_intervals", return_value=[]), \
+             mock.patch.object(dr, "query_mean_temp_f", return_value=44.0):
+            ctx = self._build(rows, panel, week)
+        wk = ctx.trend[-1][1]
+        self.assertGreater(wk["Unmonitored"], 0.0)
+        self.assertAlmostEqual(sum(v for c, v in wk.items() if c != "Car"),
+                               ctx.headline["kwh"], places=6)
+        self.assertAlmostEqual(wk["Car"], ctx.car["kwh"], places=6)
+        self.assertAlmostEqual(ctx.car["kwh"], 54.0)
+
     def test_house_week_floors_at_zero_when_the_panel_is_missing(self):
         week = date(2026, 8, 3)
         this = [week + timedelta(days=i) for i in range(7)]
