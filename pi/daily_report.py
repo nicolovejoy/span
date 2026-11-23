@@ -1464,7 +1464,8 @@ def evaluate_day(target_date: date, day_cat: dict[date, dict[str, float]],
         if category == "HVAC":
             j = rb.judge_hvac(target_date, hvac_daily, hot_water_daily, temps, rate)
             if j is not None:
-                # baseline.median = the effective expected value, so value - median = combined
+                # baseline.median = the effective expected value, so value - median = combined;
+                # mad=0/n=0 are placeholders and must not be read.
                 out.append(CategoryVerdict(category, "judge", value,
                                            rb.Baseline(median=value - j.combined_kwh, mad=0.0, n=0),
                                            j.result, j))

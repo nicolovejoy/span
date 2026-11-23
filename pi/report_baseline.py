@@ -162,8 +162,9 @@ def combine_hvac(space: PartJudgement | None, hot_water: PartJudgement | None, r
 def judge_hvac(target: date, hvac_daily: dict[date, float], hot_water_daily: dict[date, float],
                temps: dict[date, float], rate: float,
                floor_usd: float = MATERIALITY_FLOOR_USD) -> HvacJudgement | None:
-    """None when the target day has no hot-water value, or when neither part has enough
-    samples; the caller then judges HVAC as a whole on the weekday baseline (plus floor)."""
+    """None when the target day has no hot-water value, or when either part lacks enough
+    samples (judging one part alone would leave the other's usage unjudged); the caller then
+    judges HVAC as a whole on the weekday baseline (plus floor)."""
     if target not in hot_water_daily:
         return None
     sample_dates = trailing_same_weekday_dates(target, 8)
@@ -186,7 +187,7 @@ def judge_hvac(target: date, hvac_daily: dict[date, float], hot_water_daily: dic
         ss = [space_of(d) for d in sample_dates if d in eligible]
         space = (judge_part("space", space_value, compute_baseline(ss), "weekday")
                  if category_coverage_ok(len(ss)) else None)
-    if space is None and hot_water is None:
+    if space is None or hot_water is None:
         return None
     return combine_hvac(space, hot_water, rate, floor_usd, temp_f=temps.get(target))
 

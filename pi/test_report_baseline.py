@@ -437,13 +437,21 @@ class JudgeHvacTest(unittest.TestCase):
         self.assertEqual(j.space.basis, "weekday")
         self.assertIsNone(j.temp_f)
 
-    def test_too_few_weekday_hot_water_samples(self):
+    def test_too_few_weekday_hot_water_samples_returns_none(self):
+        # Space is judged but hot water cannot be: its usage would go unjudged, so the caller
+        # judges whole HVAC instead.
         hvac, hw, temps = hvac_fixture(self.T)
         for w in (1, 2, 3):
-            del hw[self.T - timedelta(weeks=w)]
-        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
-        self.assertIsNone(j.hot_water)          # 5 of 8
-        self.assertEqual(j.space.basis, "weather")
+            del hw[self.T - timedelta(weeks=w)]      # 5 of 8
+        self.assertIsNone(rb.judge_hvac(self.T, hvac, hw, temps, RATE))
+
+    def test_space_unjudgeable_with_hot_water_judged_returns_none(self):
+        # No similar-temperature days and too few weekday space samples, but hot water has all
+        # 8: judging hot water alone would leave space usage unjudged.
+        hvac, hw, temps = hvac_fixture(self.T, similar=())
+        for w in (1, 2, 3):
+            del hvac[self.T - timedelta(weeks=w)]    # space samples 5 of 8; hw still 8
+        self.assertIsNone(rb.judge_hvac(self.T, hvac, hw, temps, RATE))
 
     def test_no_hot_water_on_target_returns_none(self):
         hvac, hw, temps = hvac_fixture(self.T)
