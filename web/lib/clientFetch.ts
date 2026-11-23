@@ -36,6 +36,11 @@ export const energyCacheKey = (
   drill?: string,
 ): string => `${drillKey(drill)}|${fromMs}|${toMs}`;
 
+/** Bumped when /api/power's payload changes shape, so a browser HTTP-cached
+ *  response from before (max-age is a day for past windows) is never served.
+ *  u1: the category view carries an "Unmonitored" series. */
+const POWER_SHAPE = "u1";
+
 export async function fetchSeriesCached(
   fromMs: number,
   toMs: number,
@@ -54,6 +59,7 @@ export async function fetchSeriesCached(
     url.searchParams.set("from", String(fromMs));
     url.searchParams.set("to", String(toMs));
     url.searchParams.set("interval", interval);
+    url.searchParams.set("shape", POWER_SHAPE);
     if (drill) url.searchParams.set("drill", drill);
     const r = await fetch(url.toString());
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
