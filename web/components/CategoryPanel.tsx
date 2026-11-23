@@ -22,6 +22,7 @@ export function CategoryPanel({
   rows,
   off,
   expanded,
+  loadedCircuits,
   period,
   onSelect,
   onExpand,
@@ -30,6 +31,8 @@ export function CategoryPanel({
   off: OffSet;
   /** Categories whose circuit rows are showing. */
   expanded: readonly string[];
+  /** Categories whose circuit fetch has settled (a failed or empty one too). */
+  loadedCircuits: readonly string[];
   period: string | null;
   onSelect: (off: OffSet) => void;
   onExpand: (cat: string) => void;
@@ -107,7 +110,11 @@ export function CategoryPanel({
               </div>
               {open && row.key !== UNMONITORED && (
                 row.circuits.length === 0 ? (
-                  <p className="pl-6 text-xs text-zinc-500">{EXPLORER_COPY.circuitsLoading}</p>
+                  <p className="pl-6 text-xs text-zinc-500">
+                    {loadedCircuits.includes(row.key)
+                      ? EXPLORER_COPY.circuitsNone
+                      : EXPLORER_COPY.circuitsLoading}
+                  </p>
                 ) : (
                   row.circuits.map((c) => (
                     <label

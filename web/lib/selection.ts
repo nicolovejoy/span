@@ -101,6 +101,27 @@ export function pruneCircuits(off: OffSet, cat: string, members: readonly string
   return kept.length === off.circuits.length ? off : { ...off, circuits: kept };
 }
 
+/** Prune stale off-circuit names, but only the first time each category's
+ *  circuit list arrives in a page load. Only names that came in on the URL can
+ *  be stale; names added by a click come from the live list. Later responses
+ *  (a pan to a month before a rename) must never turn a circuit back on, so
+ *  they prune nothing. An empty response neither prunes nor counts as seen.
+ *  Returns the same `off` when nothing changes, and a new `done` set. */
+export function pruneFirstSeen(
+  off: OffSet,
+  responses: ReadonlyMap<string, readonly string[]>,
+  done: ReadonlySet<string>,
+): { off: OffSet; done: Set<string> } {
+  const seen = new Set(done);
+  let next = off;
+  for (const [cat, members] of responses) {
+    if (seen.has(cat) || members.length === 0) continue;
+    seen.add(cat);
+    next = pruneCircuits(next, cat, members);
+  }
+  return { off: next, done: seen };
+}
+
 /** Categories whose circuit list must be fetched: expanded in the panel or
  *  partly off, in stack order. Unmonitored has no circuits. */
 export const categoriesNeedingCircuits = (off: OffSet, expanded: readonly string[]): string[] =>

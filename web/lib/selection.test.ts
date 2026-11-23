@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   EVERYTHING, SELECTABLE, activePreset, categoriesNeedingCircuits, categoryState, chartCategories,
   isCircuitOn, isOn, offCircuitsIn, offFromShow, offKey, onlyThese, parseOff, partialCategories,
-  presetOff, pruneCircuits, sameOff, serializeOff, showTotal, toggle, toggleCircuit, withCircuits,
+  presetOff, pruneCircuits, pruneFirstSeen, sameOff, serializeOff, showTotal, toggle, toggleCircuit, withCircuits,
   type OffSet,
 } from "./selection";
 
@@ -177,6 +177,33 @@ describe("withCircuits / pruneCircuits", () => {
   it("never prunes on an empty member list (a failed fetch)", () => {
     const off = os([], [CTRL]);
     expect(pruneCircuits(off, "HVAC", [])).toBe(off);
+  });
+});
+
+describe("pruneFirstSeen", () => {
+  const stale = os([], ["Heat pump (old name)", LIV]);
+  it("the first response for a category prunes names it does not list", () => {
+    const r = pruneFirstSeen(stale, new Map([["HVAC", HVAC_MEMBERS]]), new Set());
+    expect(r.off).toEqual(os([], [LIV]));
+    expect(r.done.has("HVAC")).toBe(true);
+  });
+  it("a later response for the same category prunes nothing, even if a name is missing", () => {
+    const off = os([], [CTRL]);
+    const r = pruneFirstSeen(off, new Map([["HVAC", [LIV]]]), new Set(["HVAC"]));
+    expect(r.off).toBe(off);
+  });
+  it("an empty response never prunes and does not count as pruned once", () => {
+    const r = pruneFirstSeen(stale, new Map([["HVAC", []]]), new Set());
+    expect(r.off).toBe(stale);
+    expect(r.done.has("HVAC")).toBe(false);
+    const later = pruneFirstSeen(stale, new Map([["HVAC", HVAC_MEMBERS]]), r.done);
+    expect(later.off).toEqual(os([], [LIV]));
+  });
+  it("does not mutate the done set it was given, and handles categories independently", () => {
+    const done = new Set<string>();
+    const r = pruneFirstSeen(stale, new Map([["HVAC", HVAC_MEMBERS], ["Car", []]]), done);
+    expect(done.size).toBe(0);
+    expect([...r.done]).toEqual(["HVAC"]);
   });
 });
 

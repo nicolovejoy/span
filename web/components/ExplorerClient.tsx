@@ -21,7 +21,7 @@ import {
   isCircuitOn,
   isOn,
   offKey,
-  pruneCircuits,
+  pruneFirstSeen,
 } from "@/lib/selection";
 import { panelRows, selectionSummary } from "@/lib/selectionSummary";
 import { EXPLORER_COPY, panelSummary, periodText } from "@/lib/explorerCopy";
@@ -133,16 +133,20 @@ export function ExplorerClient({
   }, [visible.fromMs, visible.toMs, needCats.join(",")]);
 
   // Forget off-circuit names the panel no longer has (renamed or removed), so a
-  // stale link can't leave a category partly off for ever. An empty result (a
-  // failed fetch) never prunes.
+  // stale link can't leave a category partly off for ever. Only names that came
+  // in on the URL can be stale, so each category is pruned once, the first time
+  // its circuit list arrives; a pan to another period never changes the
+  // selection or the URL.
   const offRef = useRef(view.off);
   offRef.current = view.off;
+  const prunedRef = useRef<ReadonlySet<string>>(new Set());
   useEffect(() => {
-    let next = offRef.current;
-    for (const [cat, catRows] of circuitEnergy) {
-      next = pruneCircuits(next, cat, catRows.map((r) => r.category));
-    }
-    if (next !== offRef.current) dispatch({ type: "select", off: next });
+    const responses = new Map(
+      [...circuitEnergy].map(([cat, catRows]) => [cat, catRows.map((r) => r.category)] as const),
+    );
+    const r = pruneFirstSeen(offRef.current, responses, prunedRef.current);
+    prunedRef.current = r.done;
+    if (r.off !== offRef.current) dispatch({ type: "select", off: r.off });
   }, [circuitEnergy]);
 
   // Events layer — mode runs + bath/charge events for the visible window. No
@@ -206,6 +210,7 @@ export function ExplorerClient({
     rows: panel,
     off: view.off,
     expanded: view.expanded,
+    loadedCircuits: [...circuitEnergy.keys()],
     period,
     onSelect: (off: typeof view.off) => dispatch({ type: "select", off }),
     onExpand: (category: string) => dispatch({ type: "expand", category }),

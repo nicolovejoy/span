@@ -341,6 +341,22 @@ export function PowerChart({
     totalSeriesRef.current?.applyOptions({ visible: showTotal(off) });
   };
 
+  // One category's circuit series, or null when the request failed. A circuit
+  // failure must never fail the chart: the category band just draws whole.
+  const fetchCircuitSeries = (
+    fromMs: number,
+    toMs: number,
+    interval: IntervalKey,
+    cat: string,
+  ): Promise<readonly [string, SeriesPoint[]] | null> =>
+    fetchSeriesCached(fromMs, toMs, interval, cat).then(
+      (pts) => [cat, pts] as const,
+      (e) => {
+        console.warn(`PowerChart circuit fetch failed for ${cat}:`, e);
+        return null;
+      },
+    );
+
   // Merge fetched per-circuit responses into circuitDataRef for window `key`
   // (starting a fresh entry if the ref holds another window's).
   const mergeCircuits = (
@@ -373,13 +389,11 @@ export function PowerChart({
     const { fromMs, toMs, interval } = d.win;
     const key = d.loadKey;
     Promise.all(
-      missing.map((c) =>
-        fetchSeriesCached(fromMs, toMs, interval, c).then((pts) => [c, pts] as const),
-      ),
+      missing.map((c) => fetchCircuitSeries(fromMs, toMs, interval, c)),
     )
-      .then((results) => {
+      .then((settled) => {
         if (!chartAliveRef.current || dataRef.current?.loadKey !== key) return;
-        mergeCircuits(key, results);
+        mergeCircuits(key, settled.filter((r) => r !== null));
         applyStack(offRef.current);
       })
       .catch((e) => console.warn("PowerChart circuit fetch failed:", e));
@@ -594,13 +608,12 @@ export function PowerChart({
     const partial = partialCategories(offRef.current);
     Promise.all([
       fetchSeriesCached(load.fromMs, load.toMs, load.interval),
-      ...partial.map((c) =>
-        fetchSeriesCached(load.fromMs, load.toMs, load.interval, c).then(
-          (pts) => [c, pts] as const,
-        ),
-      ),
+      ...partial.map((c) => fetchCircuitSeries(load.fromMs, load.toMs, load.interval, c)),
     ])
-      .then(([data, ...circuitResults]) => {
+      .then(([data, ...settled]) => {
+        // A failed circuit request is left out: that category's band draws
+        // whole, and the next ensureCircuits retries it.
+        const circuitResults = settled.filter((r) => r !== null);
         const chart = chartRef.current;
         if (cancelled || !chart || !chartAliveRef.current || chart !== chartAtStart)
           return;

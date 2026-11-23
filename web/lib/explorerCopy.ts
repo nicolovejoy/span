@@ -27,6 +27,7 @@ export const EXPLORER_COPY = {
   partKwh: (on: number, total: number) => `${on.toFixed(1)} of ${total.toFixed(1)}`,
   legendPartial: (cat: string) => `${cat} (part)`,
   circuitsLoading: "Loading circuits…",
+  circuitsNone: "No circuit data for this period",
 };
 
 /** "Nov 2026 so far" from the snap metadata carried on every breakdown row. */
