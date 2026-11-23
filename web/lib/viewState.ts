@@ -1,6 +1,6 @@
 // The explorer's client-side state machine. Pure (no React, no DOM) so the
-// interactions between the range, the bucket, the selection and the drill can
-// be tested directly — ExplorerClient just wires it to useReducer.
+// interactions between the range, the bucket, the selection and the expanded
+// rows can be tested directly — ExplorerClient just wires it to useReducer.
 
 import type { BucketKey } from "@/components/BucketSelector";
 import {
@@ -9,13 +9,11 @@ import {
   RANGE_PRESETS,
   type RangePreset,
 } from "./interval";
-import { isOn, onlyThese, type OffSet } from "./selection";
+import { CATEGORY_ORDER } from "./drill";
+import type { OffSet } from "./selection";
 import type { DashState } from "./url-state";
 
-/** DashState plus the one piece of bookkeeping nothing downstream reads: the
- *  selection to put back when a drill is backed out. Kept out of DashState
- *  so it can't leak into the URL or the chart's props. */
-export type ViewState = DashState & { offBeforeDrill: OffSet | null };
+export type ViewState = DashState;
 
 // Actions only change the *visible* window and the bucket. Pan/zoom never
 // dispatches here — it explores within the (wider) window the chart has
@@ -27,14 +25,11 @@ export type Action =
   | { type: "window"; fromMs: number; toMs: number; now: number }
   | { type: "bucket"; key: BucketKey }
   | { type: "select"; off: OffSet }
-  | { type: "drill"; category: string | null }
+  | { type: "expand"; category: string }
   | { type: "events"; on: boolean };
 
-/** Seed the reducer from a parsed URL — nothing to restore yet. */
-export const initView = (s: DashState): ViewState => ({
-  ...s,
-  offBeforeDrill: null,
-});
+/** Seed the reducer from a parsed URL. */
+export const initView = (s: DashState): ViewState => s;
 
 export function reducer(s: ViewState, a: Action): ViewState {
   switch (a.type) {
@@ -75,38 +70,16 @@ export function reducer(s: ViewState, a: Action): ViewState {
       return a.key === "auto"
         ? { ...s, interval: autoInterval(s.fromMs, s.toMs), intervalAuto: true }
         : { ...s, interval: a.key, intervalAuto: false };
-    case "select": {
-      // Filtering the drilled category out of view backs out of the drill —
-      // otherwise its circuits would keep drawing with no parent line. That's
-      // the user overriding the focus below, so there's nothing left to restore.
-      const dropped = !!s.drill && !isOn(a.off, s.drill);
+    case "select":
+      return { ...s, off: a.off };
+    case "expand":
+      // Toggle one category's circuit rows; the selection is untouched.
       return {
         ...s,
-        off: a.off,
-        drill: dropped ? null : s.drill,
-        offBeforeDrill: dropped ? null : s.offBeforeDrill,
+        expanded: CATEGORY_ORDER.filter((c) =>
+          c === a.category ? !s.expanded.includes(c) : s.expanded.includes(c),
+        ),
       };
-    }
-    case "drill":
-      // Focus. A drilled category's circuits are often an order of magnitude
-      // smaller than a sibling line (Lights ~0.2 kW next to Car at 7 kW), and
-      // they share one price scale — so a drill narrows the selection to the
-      // drilled category and remembers what was there before. Backing out (✕ / re-tap)
-      // restores it; switching straight to another category keeps the original
-      // memory, so one back-out still returns to where you started.
-      return a.category
-        ? {
-            ...s,
-            drill: a.category,
-            off: onlyThese([a.category]),
-            offBeforeDrill: s.drill ? s.offBeforeDrill : s.off,
-          }
-        : {
-            ...s,
-            drill: null,
-            off: s.offBeforeDrill ?? s.off,
-            offBeforeDrill: null,
-          };
     case "events":
       return { ...s, events: a.on };
   }

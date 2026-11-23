@@ -25,3 +25,35 @@ export function stackLayers<T extends number>(
   }
   return layers;
 }
+
+/** Each category's series minus the series of its off circuits, so a band
+ *  shows only what is ticked. Subtraction is exact because the category series
+ *  is the sum of the same per-circuit bucket means. A category with no off
+ *  circuit loaded keeps its original inner map (same object); results clamp at
+ *  0 and only the category's own times appear. */
+export function subtractOffCircuits<T extends number>(
+  byCat: Map<string, Map<T, number>>,
+  circuits: Map<string, Map<T, number>>,
+  offCircuits: readonly string[],
+  categoryOf: (name: string) => string,
+): Map<string, Map<T, number>> {
+  const out = new Map(byCat);
+  const offByCat = new Map<string, Map<T, number>[]>();
+  for (const name of offCircuits) {
+    const series = circuits.get(name);
+    if (!series) continue; // not loaded yet
+    const cat = categoryOf(name);
+    offByCat.set(cat, [...(offByCat.get(cat) ?? []), series]);
+  }
+  for (const [cat, seriesList] of offByCat) {
+    const base = byCat.get(cat);
+    if (!base) continue;
+    const next = new Map<T, number>();
+    for (const [t, v] of base) {
+      const off = seriesList.reduce((sum, s) => sum + (s.get(t) ?? 0), 0);
+      next.set(t, Math.max(0, v - off));
+    }
+    out.set(cat, next);
+  }
+  return out;
+}

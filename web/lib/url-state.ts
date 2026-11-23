@@ -14,6 +14,7 @@ import {
   onlyThese,
   parseOff,
   serializeOff,
+  withCircuits,
   type OffSet,
 } from "./selection";
 
@@ -23,12 +24,11 @@ export type DashState = {
   interval: IntervalKey;
   intervalAuto: boolean;
   rangePreset: RangePreset | null;
-  /** What is turned off (see lib/selection). Client-side only; never affects
-   * Influx queries. */
+  /** What is turned off, categories and circuits (see lib/selection). */
   off: OffSet;
-  /** Category expanded into its member circuits, or null. At most one at a
-   * time (#12). Unlike `off` this *does* drive a query. */
-  drill: string | null;
+  /** Categories whose circuit rows show in the side panel, in stack order.
+   * Never in the URL: it is view state, not intent. */
+  expanded: string[];
   /** Events layer (mode strip + list) visible. Default true; URL carries
    *  events=0 only when off. */
   events: boolean;
@@ -36,21 +36,22 @@ export type DashState = {
 
 /**
  * Build the intent-only search string for the URL: the preset range, what is
- * turned off, and the drilled category — never the transient pan/zoom window.
- * Commas in `off` are kept literal (URLSearchParams would emit %2C) for a
- * readable URL. Never emits the legacy `show` param (parseState still reads it).
+ * turned off (`off` for categories, one `offc` per circuit) — never the
+ * transient pan/zoom window. Commas in `off` are kept literal (URLSearchParams
+ * would emit %2C) for a readable URL; circuit names are percent-encoded since
+ * they contain `/`, `,` and spaces. Never emits the legacy `show` or `drill`
+ * params (parseState still reads them).
  */
 export function buildIntentSearch(
   range: RangePreset | null,
   off: OffSet,
-  drill: string | null = null,
   events: boolean = true,
 ): string {
   const parts: string[] = [];
   if (range) parts.push(`range=${range}`);
   const offStr = serializeOff(off);
   if (offStr) parts.push(`off=${offStr}`);
-  if (drill) parts.push(`drill=${drill}`);
+  for (const c of off.circuits) parts.push(`offc=${encodeURIComponent(c)}`);
   if (!events) parts.push("events=0");
   return parts.join("&");
 }
@@ -61,6 +62,9 @@ const isInterval = (v: string): v is IntervalKey =>
 
 const first = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
+
+const all = (v: string | string[] | undefined): string[] =>
+  v === undefined ? [] : Array.isArray(v) ? v : [v];
 
 function parseWindow(
   fromRaw: string | undefined,
@@ -95,9 +99,8 @@ function parseInterval(
 const parseList = (raw: string | undefined): string[] =>
   raw ? raw.split(",").filter(Boolean) : [];
 
-/** A drill only survives a reload if it names a real category and that category
- *  is actually on under the current selection — otherwise the chart would
- *  drill into a hidden line. */
+/** A legacy `drill=` link only counts if it names a real category that is on
+ *  under the current selection. */
 export function parseDrill(
   raw: string | undefined,
   off: OffSet,
@@ -120,26 +123,23 @@ export function parseState(
   const iv = parseInterval(first(params.interval), win.fromMs, win.toMs);
   // `off=` is the current form; `show=` (what is ON) is what email deep links
   // from pi/email_kit.py still send. `off` wins if both are present.
-  const off =
+  const base =
     params.off !== undefined
       ? parseOff(first(params.off))
       : offFromShow(parseList(first(params.show)));
+  let off = withCircuits(base, all(params.offc));
+  // Legacy `drill=X` links (pre-circuit-boxes): expand X's rows and narrow the
+  // selection to it, as the old drill did, keeping any circuits that are off.
   const drill = parseDrill(first(params.drill), off);
+  if (drill) off = withCircuits(onlyThese([drill]), off.circuits);
   return {
     fromMs: win.fromMs,
     toMs: win.toMs,
     rangePreset: win.rangePreset,
     interval: iv.interval,
     intervalAuto: iv.intervalAuto,
-    // A drill focuses the selection on the drilled category (ExplorerClient's
-    // reducer does the same on click) so a small family of circuits gets the
-    // price scale to itself. The URL therefore always carries the *narrowed*
-    // `off` — it describes what's on screen, not what it was before the drill.
-    // The pre-drill selection is reducer-only state and doesn't survive a
-    // reload, so backing out of a drill you arrived at by URL leaves `off`
-    // narrowed.
-    off: drill ? onlyThese([drill]) : off,
-    drill,
+    off,
+    expanded: drill ? [drill] : [],
     events: first(params.events) !== "0",
   };
 }

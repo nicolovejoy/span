@@ -15,7 +15,14 @@ import { SelectionHeadline } from "./SelectionHeadline";
 import { stepWindow } from "@/lib/brush";
 import { initView, reducer } from "@/lib/viewState";
 import { buildIntentSearch, type DashState } from "@/lib/url-state";
-import { activePreset, isOn, serializeOff } from "@/lib/selection";
+import {
+  activePreset,
+  categoriesNeedingCircuits,
+  isCircuitOn,
+  isOn,
+  offKey,
+  pruneFirstSeen,
+} from "@/lib/selection";
 import { panelRows, selectionSummary } from "@/lib/selectionSummary";
 import { EXPLORER_COPY, panelSummary, periodText } from "@/lib/explorerCopy";
 import { fetchEnergyCached, fetchEventsCached, seedEnergy } from "@/lib/clientFetch";
@@ -72,14 +79,10 @@ export function ExplorerClient({
   // Intent-only URL — preset + filter, never the pan/zoom window. replaceState
   // (not router) so there's no server navigation.
   useEffect(() => {
-    const search = buildIntentSearch(
-      view.rangePreset,
-      view.off,
-      view.drill,
-      view.events,
-    );
+    const search = buildIntentSearch(view.rangePreset, view.off, view.events);
     window.history.replaceState(null, "", search ? `/?${search}` : "/");
-  }, [view.rangePreset, serializeOff(view.off), view.drill, view.events]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.rangePreset, offKey(view.off), view.events]);
 
   // Breakdown table — cache-backed energy fetch for the visible window.
   const [rows, setRows] = useState<EnergyRow[]>(initialEnergy);
@@ -102,26 +105,49 @@ export function ExplorerClient({
     };
   }, [visible.fromMs, visible.toMs]);
 
-  // Drilled circuit rows — a separate request from the category rows above, so
-  // the category table stays a cache hit while a drill is toggled on and off.
-  const [circuitRows, setCircuitRows] = useState<EnergyRow[]>([]);
+  // Circuit energy: one request per category that is expanded in the panel or
+  // partly off, separate from the category rows above so those stay a cache
+  // hit. These rows come only from the per-circuit fetch — the category fetch
+  // also carries HVAC-mode child rows, which are not circuits.
+  const needCats = categoriesNeedingCircuits(view.off, view.expanded);
+  const [circuitEnergy, setCircuitEnergy] = useState<Map<string, EnergyRow[]>>(
+    () => new Map(),
+  );
   useEffect(() => {
-    if (!view.drill) {
-      setCircuitRows([]);
+    if (needCats.length === 0) {
+      setCircuitEnergy((prev) => (prev.size === 0 ? prev : new Map()));
       return;
     }
     let cancelled = false;
-    fetchEnergyCached(visible.fromMs, visible.toMs, view.drill)
-      .then((r) => {
-        if (!cancelled) setCircuitRows(r);
-      })
-      .catch(() => {
-        if (!cancelled) setCircuitRows([]);
-      });
+    Promise.all(
+      needCats.map((c) =>
+        fetchEnergyCached(visible.fromMs, visible.toMs, c).catch((): EnergyRow[] => []),
+      ),
+    ).then((results) => {
+      if (!cancelled) setCircuitEnergy(new Map(needCats.map((c, i) => [c, results[i]!])));
+    });
     return () => {
       cancelled = true;
     };
-  }, [visible.fromMs, visible.toMs, view.drill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible.fromMs, visible.toMs, needCats.join(",")]);
+
+  // Forget off-circuit names the panel no longer has (renamed or removed), so a
+  // stale link can't leave a category partly off for ever. Only names that came
+  // in on the URL can be stale, so each category is pruned once, the first time
+  // its circuit list arrives; a pan to another period never changes the
+  // selection or the URL.
+  const offRef = useRef(view.off);
+  offRef.current = view.off;
+  const prunedRef = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const responses = new Map(
+      [...circuitEnergy].map(([cat, catRows]) => [cat, catRows.map((r) => r.category)] as const),
+    );
+    const r = pruneFirstSeen(offRef.current, responses, prunedRef.current);
+    prunedRef.current = r.done;
+    if (r.off !== offRef.current) dispatch({ type: "select", off: r.off });
+  }, [circuitEnergy]);
 
   // Events layer — mode runs + bath/charge events for the visible window. No
   // fetch while the Events chip is off.
@@ -164,20 +190,30 @@ export function ExplorerClient({
   }, [visible.fromMs, visible.toMs, view.events]);
 
   const filtered = rows.filter((r) => isOn(view.off, r.parent ?? r.category));
-  const tableRows = mergeDrillRows(filtered, circuitRows, view.drill);
+  const tableRows = view.expanded.reduce(
+    (acc, cat) =>
+      mergeDrillRows(
+        acc,
+        (circuitEnergy.get(cat) ?? []).filter((r) => isCircuitOn(view.off, r.category)),
+        cat,
+      ),
+    filtered,
+  );
 
   // Panel and headline read the unfiltered category rows, so an off category
   // still shows its kWh and the share has the whole house as its base.
-  const panel = panelRows(rows, view.off);
-  const summary = selectionSummary(rows, view.off);
+  const circuitRows = [...circuitEnergy.values()].flat();
+  const panel = panelRows(rows, view.off, circuitRows);
+  const summary = selectionSummary(rows, view.off, circuitRows);
   const period = periodText(rows);
   const panelProps = {
     rows: panel,
     off: view.off,
-    drill: view.drill,
+    expanded: view.expanded,
+    loadedCircuits: [...circuitEnergy.keys()],
     period,
     onSelect: (off: typeof view.off) => dispatch({ type: "select", off }),
-    onDrill: (category: string | null) => dispatch({ type: "drill", category }),
+    onExpand: (category: string) => dispatch({ type: "expand", category }),
   };
 
   return (
