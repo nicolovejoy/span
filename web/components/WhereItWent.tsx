@@ -42,7 +42,7 @@ export function WhereItWent({
 }) {
   const sel = selKey ? periods.find((p) => p.key === selKey) : undefined;
   const ranked = sel ? [sel] : periods;
-  const { rows, totalValue, bathKwh } = panelRows(ranked, unit);
+  const { rows, totalValue, bathKwh, car } = panelRows(ranked, unit);
   const fmt = unit === "usd" ? fmtUsd : fmtKwh;
   const max = Math.max(0, ...rows.map((r) => r.value));
   const label = sel ? periodLabel(sel, grain) : rangeLabel(periods, grain);
@@ -54,6 +54,7 @@ export function WhereItWent({
       <h2 className="text-sm font-semibold">
         {COPY.whereItWent} · {label}
       </h2>
+      <div className="text-xs text-zinc-500">{COPY.houseHeadline}</div>
       <div className="text-2xl font-semibold tabular-nums">{fmt(totalValue)}</div>
       {ranked.some((p) => projectionFactor(p) !== null) && (
         <div className="text-xs text-zinc-500">{COPY.panelActualNote}</div>
@@ -81,6 +82,10 @@ export function WhereItWent({
           </li>
         ))}
       </ul>
+      <div className="flex items-center gap-1.5 text-sm">
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: ROW_FILL.car }} />
+        {COPY.carLine(fmtKwh(car.kwh), fmtUsd(car.usd))}
+      </div>
       {from !== undefined && to !== undefined && (
         <a href={`/?from=${from}&to=${to}`} className="text-xs text-blue-600 hover:underline dark:text-blue-400">
           {COPY.openInExplorer}
