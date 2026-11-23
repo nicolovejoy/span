@@ -320,5 +320,142 @@ class WeatherMatchedBaselineTest(unittest.TestCase):
         self.assertIsNone(rb.weather_matched_baseline([]))
 
 
+RATE = 0.1241
+WK = [9, 10, 11, 10, 9, 11, 10, 9]      # median 10, mad 1.4826
+HW = [4, 5, 4, 5, 4, 5, 4, 5]           # median 4.5, mad 0.7413
+
+
+def part(name, value, samples, basis="weekday"):
+    return rb.judge_part(name, value, rb.compute_baseline(samples), basis)
+
+
+class CombineHvacTest(unittest.TestCase):
+    def test_two_sub_floor_excesses_add_up_to_an_alert(self):
+        j = rb.combine_hvac(part("space", 16.0, WK), part("hot_water", 11.5, HW), RATE)
+        self.assertAlmostEqual(j.combined_kwh, 13.0)          # 6 + 7, each under $1.50
+        self.assertTrue(j.result.is_anomalous)                # $1.61
+        self.assertAlmostEqual(j.result.z, 9.4429, places=3)  # hot water has the larger |z|
+        self.assertAlmostEqual(j.expected_kwh, 14.5)
+        self.assertAlmostEqual(j.result.pct, 13.0 / 14.5 * 100)
+
+    def test_only_anomalous_parts_count(self):
+        # space +1 is normal and contributes nothing: 7 kWh, $0.87, no alert
+        j = rb.combine_hvac(part("space", 11.0, WK), part("hot_water", 11.5, HW), RATE)
+        self.assertAlmostEqual(j.combined_kwh, 7.0)
+        self.assertFalse(j.result.is_anomalous)
+
+    def test_a_noisy_normal_part_cannot_push_the_sum_over_the_floor(self):
+        wide = [5, 15, 5, 15, 5, 15, 5, 15]   # median 10, mad 7.413: +15 is z 2.02, normal
+        j = rb.combine_hvac(part("space", 25.0, wide), part("hot_water", 11.5, HW), RATE)
+        self.assertFalse(j.space.result.is_anomalous)
+        self.assertAlmostEqual(j.combined_kwh, 7.0)           # not 22
+        self.assertFalse(j.result.is_anomalous)
+
+    def test_single_part_over_the_floor(self):
+        j = rb.combine_hvac(part("space", 23.0, WK), part("hot_water", 4.5, HW), RATE)
+        self.assertAlmostEqual(j.combined_kwh, 13.0)
+        self.assertTrue(j.result.is_anomalous)
+
+    def test_neither_part_anomalous(self):
+        j = rb.combine_hvac(part("space", 12.9, WK), part("hot_water", 5.9, HW), RATE)
+        self.assertEqual(j.combined_kwh, 0.0)
+        self.assertFalse(j.result.is_anomalous)
+        self.assertIsNone(j.result.z)
+
+    def test_opposite_signs_net_out(self):
+        # space +14 (anomalous), hot water -3 (anomalous): +11 kWh, $1.37, no alert
+        j = rb.combine_hvac(part("space", 24.0, WK), part("hot_water", 1.5, HW), RATE)
+        self.assertAlmostEqual(j.combined_kwh, 11.0)
+        self.assertFalse(j.result.is_anomalous)
+
+    def test_below_normal_alert(self):
+        low = [19, 20, 21, 20, 19, 21, 20, 19]
+        j = rb.combine_hvac(part("space", 7.0, low), None, RATE)
+        self.assertAlmostEqual(j.combined_kwh, -13.0)
+        self.assertTrue(j.result.is_anomalous)
+        self.assertLess(j.result.z, 0)
+
+    def test_no_parts(self):
+        j = rb.combine_hvac(None, None, RATE)
+        self.assertFalse(j.result.is_anomalous)
+        self.assertIsNone(j.result.pct)
+
+
+def hvac_fixture(target, similar=((3, 10.0), (5, 11.0), (10, 10.0), (20, 12.0), (30, 11.0)),
+                 target_space=16.8, target_hw=11.5):
+    """61 days ending at `target`. Default day: 60F, space 3.0 kWh. Hot water alternates
+    4/5 by week, so the 8 same-weekday samples are HW-like (median 4.5). `similar` lists
+    (days_before_target, space_kwh) at 43F; the target is 43F."""
+    hvac, hw, temps = {}, {}, {}
+    for k in range(60, 0, -1):
+        d = target - timedelta(days=k)
+        hw[d] = 4.0 if (k // 7) % 2 == 0 else 5.0
+        hvac[d] = hw[d] + 3.0
+        temps[d] = 60.0
+    for k, space in similar:
+        d = target - timedelta(days=k)
+        hvac[d] = hw[d] + space
+        temps[d] = 43.0
+    hw[target], hvac[target], temps[target] = target_hw, target_hw + target_space, 43.0
+    return hvac, hw, temps
+
+
+class JudgeHvacTest(unittest.TestCase):
+    T = date(2026, 11, 19)   # Thursday; the fixture's similar days are not Thursdays
+
+    def test_weather_basis_and_combined_alert(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertEqual(j.space.basis, "weather")
+        self.assertEqual(j.space.baseline.n, 5)
+        self.assertAlmostEqual(j.space.baseline.median, 10.8)
+        self.assertAlmostEqual(j.space.excess_kwh, 6.0)
+        self.assertEqual(j.hot_water.basis, "weekday")
+        self.assertAlmostEqual(j.hot_water.baseline.median, 4.5)
+        self.assertAlmostEqual(j.combined_kwh, 13.0)
+        self.assertTrue(j.result.is_anomalous)
+        self.assertEqual(j.temp_f, 43.0)
+
+    def test_fewer_than_three_similar_days_falls_back_to_weekday(self):
+        hvac, hw, temps = hvac_fixture(self.T, similar=((3, 10.0), (5, 11.0)))
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertEqual(j.space.basis, "weekday")
+        self.assertEqual(j.space.baseline.n, 8)
+        self.assertAlmostEqual(j.space.baseline.median, 3.0)
+
+    def test_similar_day_without_hot_water_is_not_eligible(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        for k in (3, 5, 10):
+            del hw[self.T - timedelta(days=k)]
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertEqual(j.space.basis, "weekday")
+
+    def test_target_without_temperature_uses_weekday(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        del temps[self.T]
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertEqual(j.space.basis, "weekday")
+        self.assertIsNone(j.temp_f)
+
+    def test_too_few_weekday_hot_water_samples(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        for w in (1, 2, 3):
+            del hw[self.T - timedelta(weeks=w)]
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertIsNone(j.hot_water)          # 5 of 8
+        self.assertEqual(j.space.basis, "weather")
+
+    def test_no_hot_water_on_target_returns_none(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        del hw[self.T]
+        self.assertIsNone(rb.judge_hvac(self.T, hvac, hw, temps, RATE))
+
+    def test_hvac_missing_on_target_reads_as_zero(self):
+        hvac, hw, temps = hvac_fixture(self.T)
+        del hvac[self.T]
+        j = rb.judge_hvac(self.T, hvac, hw, temps, RATE)
+        self.assertAlmostEqual(j.space.value, -11.5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
