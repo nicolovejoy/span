@@ -1228,6 +1228,12 @@ def _delta_arrow_pct(pct: float | None, suffix: str) -> str:
 
 
 CAR_LEGEND = "Car ↓"
+# Reader-facing names; the data key stays "Unmonitored".
+DISPLAY_NAMES = {"Unmonitored": "Washer/dryer/sub-panel"}
+
+
+def display_name(cat):
+    return DISPLAY_NAMES.get(cat, cat)
 
 
 def stack_series(periods: list[dict[str, float]], categories: list[str]) -> list[tuple[str, list[float]]]:
@@ -1265,7 +1271,7 @@ def _draw_stacked(ax, labels: list[str], periods: list[dict[str, float]],
             down = [b + v for b, v in zip(down, vals)]
         else:
             ax.bar(x, vals, bottom=up, width=width,
-                   color=CATEGORY_COLORS.get(cat, "#888"), label=cat)
+                   color=CATEGORY_COLORS.get(cat, "#888"), label=display_name(cat))
             up = [b + v for b, v in zip(up, vals)]
     if any(cat == "Car" for cat, _ in series):
         ax.axhline(0, color="#3f3f46", linewidth=1)
@@ -1351,7 +1357,7 @@ def render_usage_table(ctx: WeeklyContext) -> str:
     for r in ctx.usage_rows:
         yoy_cell = f'<td>{pct_cell(r.get("delta_yoy_pct"))}</td>' if yoy_week else ""
         rows_html.append(
-            f'<tr><td>{_esc("Car (EV charging)" if r["category"] == "Car" else r["category"])}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
+            f'<tr><td>{_esc("Car (EV charging)" if r["category"] == "Car" else display_name(r["category"]))}</td><td>{r["kwh"]:.1f}</td><td>${r["cost"]:.2f}</td>'
             f'<td>{pct_cell(r["delta_week_pct"])}</td><td>{pct_cell(r["delta_12wk_pct"])}</td>'
             f'<td>{pct_cell(r["delta_long_pct"])}</td>{yoy_cell}</tr>'
         )

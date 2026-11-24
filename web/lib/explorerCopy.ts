@@ -5,6 +5,17 @@ import { periodLabel } from "./energyWindow";
 import type { EnergyRow } from "./queryCache";
 import type { PresetId } from "./selection";
 import type { SelectionSummary } from "./selectionSummary";
+import { UNMONITORED } from "./drill";
+
+/** What a reader sees for a category. The key stays "Unmonitored" in data and
+ *  URLs (`off=Unmonitored`); only the label differs. */
+const CATEGORY_LABELS: Record<string, string> = {
+  [UNMONITORED]: "Washer/dryer/sub-panel",
+};
+
+export function categoryLabel(key: string): string {
+  return CATEGORY_LABELS[key] ?? key;
+}
 
 export const EXPLORER_COPY = {
   title: "Power Explorer",
@@ -17,7 +28,7 @@ export const EXPLORER_COPY = {
   } as Record<PresetId, string>,
   noKwh: "—",
   unmonitoredNote:
-    "Unmonitored is the subpanel (washer, dryer, …) as one feed: the panel total minus every named circuit. At 1-minute buckets it looks noisy.",
+    "Washer/dryer/sub-panel is one feed: the panel total minus every named circuit. At 1-minute buckets it looks noisy.",
   nothingSelected: "Nothing selected",
   nothingSelectedHint: "Tick a category or pick a preset.",
   events: "Events",

@@ -34,9 +34,18 @@ describe("explorer copy", () => {
     expect(periodText([])).toBeNull();
   });
   it("Unmonitored note: the subpanel as one feed, noisy at 1-minute buckets", () => {
-    expect(EXPLORER_COPY.unmonitoredNote).toMatch(/subpanel/);
+    expect(EXPLORER_COPY.unmonitoredNote).toMatch(/sub-panel/);
     expect(EXPLORER_COPY.unmonitoredNote).toMatch(/one feed/);
     expect(EXPLORER_COPY.unmonitoredNote).toMatch(/1-minute/);
     expect(EXPLORER_COPY.unmonitoredNote).not.toMatch(/no line/);
+  });
+});
+
+import { categoryLabel } from "./explorerCopy";
+
+describe("categoryLabel", () => {
+  it("renames the Unmonitored key for readers and leaves the others alone", () => {
+    expect(categoryLabel("Unmonitored")).toBe("Washer/dryer/sub-panel");
+    expect(categoryLabel("HVAC")).toBe("HVAC");
   });
 });
