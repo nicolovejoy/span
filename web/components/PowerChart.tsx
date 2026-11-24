@@ -121,6 +121,24 @@ function safeSetData(
   }
 }
 
+/** Show or hide a series, only when that is a change. Re-applying an unchanged
+ *  `visible` right after setData marks the series' options dirty while its
+ *  drawn items still hold the old bar positions; when the next setData shifts
+ *  those positions (a pan that prepends data) and the pointer is on the chart,
+ *  lightweight-charts' hit test looks a bar up by a stale position and throws
+ *  "Value is null" (found 2026-11-23: the top band vanished on a 24h pan). */
+type VisibleLike = {
+  options: () => { visible?: boolean };
+  applyOptions: (o: { visible: boolean }) => void;
+};
+function setVisible(series: VisibleLike, visible: boolean): void {
+  try {
+    if (series.options().visible !== visible) series.applyOptions({ visible });
+  } catch (e) {
+    console.warn("applyOptions(visible) failed", e);
+  }
+}
+
 // Axis formatting. Chart times are already Pacific-as-fake-UTC (see toDisplay),
 // so read them with getUTC* — the wall-clock is baked into the number.
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -330,9 +348,9 @@ export function PowerChart({
         series,
         toChartData(padBounds(layer ?? [], d.outerFromSec, d.outerToSec)),
       );
-      series.applyOptions({ visible: layer !== undefined });
+      setVisible(series, layer !== undefined);
     }
-    totalSeriesRef.current?.applyOptions({ visible: showTotal(off) });
+    if (totalSeriesRef.current) setVisible(totalSeriesRef.current, showTotal(off));
   };
 
   // One category's circuit series, or null when the request failed. A circuit
