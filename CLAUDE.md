@@ -230,10 +230,10 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   2026-11-23; step 2 (circuits) built on branch `explorer-circuits` (PR #33), not merged:
   chart stays bands only, no per-circuit lines (Nico, 2026-11-23).** Put the title **"Power Explorer"**
   prominently on the page (today the h1 reads "SPAN — power explorer"); Nico wants to recall the name.
-  (2) **Emails → option C**: merged 2026-11-23, needs a `daily-report` rebuild on the Pi. The weekly
+  (2) **Emails → option C**: deployed to the Pi 2026-11-23. The weekly
   briefing's three charts stack the house above zero and the car below; headline + deltas
   house-only, car on its own line (hidden on a week with no charging).
-  **Anomaly alerts (merged 2026-11-23, needs the same rebuild):** no alert unless
+  **Anomaly alerts (deployed 2026-11-23):** no alert unless
   |excess| x `ENERGY_RATE` >= $1.50, every category. HVAC = space (HVAC minus `hvac_mode` hot
   water) vs days within +-3F in the previous 60 (weekday fallback under 3) plus hot water vs the
   weekday baseline; summed signed, floor on the sum (`report_baseline.judge_hvac`). Backtest
@@ -249,9 +249,7 @@ subagent. The list below is near-term mechanics; the roadmap explains ordering a
   poll as before, heat pump counter stepped +368 Wh once at the switch (v1's held-back batch;
   matches the 5-min power integral, no double count). From 2026-11-06 the morning emails run on v2
   data. `collector.py`, the `pi/.env.tpl` line and the compose rollback note were
-  deleted 2026-11-13. Remaining before 2026-12-31: (1) Nico: delete the `SPAN_ACCESS_TOKEN` field
-  from the `phrpi-span-env` 1Password item and run `pi/render_env.sh` (expect one dropped key);
-  until then the Pi's `.env` still carries the unused key, harmless; (2) done 2026-11-13: the
+  deleted 2026-11-13. Remaining before 2026-12-31: (1) done 2026-11-23: `SPAN_ACCESS_TOKEN` removed from 1Password and the Pi's `.env`; (2) done 2026-11-13: the
   v1 laptop tools (`span_client.py`, `discover.py`, `run.sh`, `requirements.txt`) were retired, not
   ported; nothing in the repo speaks v1 any more. `pi/hvac_probe.py` was listed here by mistake: it
   reads Influx, not the panel, and needs nothing; (3) optional: surface

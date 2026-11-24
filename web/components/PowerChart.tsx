@@ -32,6 +32,7 @@ import {
   showTotal,
   type OffSet,
 } from "@/lib/selection";
+import { fromDisplay, isChartSeriesSafe, toChartTimes, toDisplay } from "@/lib/displayTime";
 import { affineXOf, resolveAnchors, type XOf } from "@/lib/eventLanes";
 import type { EventsPayload } from "@/lib/eventRuns";
 import { EventLanes } from "./EventLanes";
@@ -86,48 +87,38 @@ function toUtc(iso: string): UTCTimestamp {
 // library's "UTC" clock reads as Seattle local. All navigation / fetch / URL
 // math stays in true UTC; only values crossing the chart boundary are
 // transformed (toChartData / setVisibleRange out, fromDisplay back in).
-const DISPLAY_TZ = "America/Los_Angeles";
-
-// Seconds to add to a real-UTC instant so it reads as Pacific wall-clock.
-// Computed per-instant via Intl so DST flips across a wide range stay correct
-// (e.g. -8h in winter, -7h in summer). Negative west of UTC.
-function tzOffsetSec(utcMs: number): number {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: DISPLAY_TZ,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const p: Record<string, string> = {};
-  for (const part of dtf.formatToParts(new Date(utcMs))) p[part.type] = part.value;
-  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
-  return Math.round((asUtc - utcMs) / 1000);
-}
-
-// real UTC second → chart "display" second (Pacific wall-clock as fake-UTC).
-function toDisplay(realSec: number): UTCTimestamp {
-  return (realSec + tzOffsetSec(realSec * 1000)) as UTCTimestamp;
-}
-
-// chart "display" second → real UTC second. One refine pass nails the DST edge.
-function fromDisplay(dispSec: number): number {
-  let real = dispSec - tzOffsetSec(dispSec * 1000);
-  real = dispSec - tzOffsetSec(real * 1000);
-  return real;
-}
-
-// Shift a built series array onto the chart's Pacific-as-UTC clock right before
-// setData. Whitespace sentinels ({time} only) carry through without a value.
 function toChartData(entries: SeriesEntry[]): SeriesEntry[] {
-  return entries.map((e) =>
-    "value" in e
-      ? { time: toDisplay(Number(e.time)), value: e.value }
-      : { time: toDisplay(Number(e.time)) },
-  );
+  return toChartTimes(entries);
+}
+
+// Hand one series its data without letting a bad batch take the chart down.
+// The library's production build accepts bad input in setData and throws from
+// its render loop later, which blanks every series. So the batch is checked
+// first; a rejected or throwing batch leaves the series on the data it last
+// accepted (restored if setData half-applied) and is logged once per series.
+type SeriesLike = { setData: (d: SeriesEntry[]) => void };
+function safeSetData(
+  lastGood: Map<string, SeriesEntry[]>,
+  key: string,
+  series: SeriesLike,
+  data: SeriesEntry[],
+): boolean {
+  try {
+    if (!isChartSeriesSafe(data as { time: number; value?: number }[])) {
+      throw new Error("series is not strictly ascending / finite");
+    }
+    series.setData(data);
+    lastGood.set(key, data);
+    return true;
+  } catch (e) {
+    console.warn(`setData failed for ${key}; keeping previous data`, e);
+    try {
+      series.setData(lastGood.get(key) ?? []);
+    } catch {
+      /* nothing more to do for this series */
+    }
+    return false;
+  }
 }
 
 // Axis formatting. Chart times are already Pacific-as-fake-UTC (see toDisplay),
@@ -300,6 +291,8 @@ export function PowerChart({
   const [load, setLoad] = useState<LoadWindow | null>(null);
   const loadRef = useRef<LoadWindow | null>(null);
   const extendingRef = useRef(false);
+  // Last batch each series accepted, keyed by band name / "Total" (see safeSetData).
+  const lastGoodRef = useRef(new Map<string, SeriesEntry[]>());
   // Last window/bucket the padding was computed for — lets the load effect tell
   // a real range change from a remount.
   const lastViewRef = useRef<{
@@ -331,13 +324,12 @@ export function PowerChart({
       // window, every pass: lightweight-charts builds its time axis from hidden
       // series too, so stale points from an earlier window or bucket size would
       // warp the axis and the event lanes' time-to-x map.
-      try {
-        series.setData(
-          toChartData(padBounds(layer ?? [], d.outerFromSec, d.outerToSec)),
-        );
-      } catch (e) {
-        console.warn(`setData failed for ${cat}`, e);
-      }
+      safeSetData(
+        lastGoodRef.current,
+        cat,
+        series,
+        toChartData(padBounds(layer ?? [], d.outerFromSec, d.outerToSec)),
+      );
       series.applyOptions({ visible: layer !== undefined });
     }
     totalSeriesRef.current?.applyOptions({ visible: showTotal(off) });
@@ -539,6 +531,7 @@ export function PowerChart({
       chartAliveRef.current = false;
       chartRef.current = null;
       catSeriesRef.current.clear();
+      lastGoodRef.current.clear();
       circuitDataRef.current = null;
       totalSeriesRef.current = null;
       dataRef.current = null;
@@ -641,12 +634,13 @@ export function PowerChart({
           : chart.timeScale().getVisibleRange();
 
         try {
-          try {
-            totalSeriesRef.current?.setData(
+          if (totalSeriesRef.current) {
+            safeSetData(
+              lastGoodRef.current,
+              "Total",
+              totalSeriesRef.current,
               toChartData(padBounds(pointsFor(sortedTimes, totalByTime), outerFromSec, outerToSec)),
             );
-          } catch (e) {
-            console.warn("setData failed for Total", e);
           }
           // Bands and the Total line's visibility come from the selection as it
           // is now, not as it was when this load started.
