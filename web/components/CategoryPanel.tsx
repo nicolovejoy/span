@@ -10,7 +10,7 @@ import {
   type OffSet,
 } from "@/lib/selection";
 import type { PanelRow } from "@/lib/selectionSummary";
-import { EXPLORER_COPY } from "@/lib/explorerCopy";
+import { EXPLORER_COPY, categoryLabel } from "@/lib/explorerCopy";
 import { Chip } from "./QuickFilters";
 
 /** What to show: presets, one tickable row per category with its kWh (a
@@ -83,7 +83,7 @@ export function CategoryPanel({
                     style={{ background: row.color, opacity: row.state === "off" ? 0.35 : 1 }}
                     aria-hidden
                   />
-                  <span className="flex-1">{row.key}</span>
+                  <span className="flex-1">{categoryLabel(row.key)}</span>
                   <span className="tabular-nums">
                     {row.state === "partial" && row.onKwh !== null && row.kwh !== null
                       ? EXPLORER_COPY.partKwh(row.onKwh, row.kwh)

@@ -1,3 +1,4 @@
+import { categoryLabel } from "@/lib/explorerCopy";
 import { costForKwh, proratedBaseCharge } from "@/lib/rates";
 import {
   computeDelta,
@@ -95,7 +96,7 @@ export function BreakdownTable({ rows }: { rows: EnergyRow[] }) {
             >
               <td className={r.parent ? "py-1.5 pl-8 pr-3" : "px-3 py-2"}>
                 {r.parent && <span className="mr-1.5 text-zinc-400">└</span>}
-                {r.category}
+                {r.parent ? r.category : categoryLabel(r.category)}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">{r.kwh.toFixed(1)}</td>
               <td className="hidden px-3 py-2 text-right tabular-nums sm:table-cell">

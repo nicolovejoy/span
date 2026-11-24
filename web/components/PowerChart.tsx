@@ -23,7 +23,7 @@ import type { SeriesPoint } from "@/lib/influx";
 import type { DashState } from "@/lib/url-state";
 import { stackLayers, subtractOffCircuits } from "@/lib/stack";
 import { categorize } from "@/lib/categories";
-import { EXPLORER_COPY } from "@/lib/explorerCopy";
+import { EXPLORER_COPY, categoryLabel } from "@/lib/explorerCopy";
 import {
   categoryState,
   chartCategories,
@@ -705,7 +705,7 @@ export function PowerChart({
       .reverse()
       .map((c) => ({
         label:
-          categoryState(state.off, c) === "partial" ? EXPLORER_COPY.legendPartial(c) : c,
+          categoryState(state.off, c) === "partial" ? EXPLORER_COPY.legendPartial(c) : categoryLabel(c),
         color: categoryColor(c),
         filled: true,
       })),

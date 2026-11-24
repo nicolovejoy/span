@@ -20,7 +20,7 @@ export const LAYER_LABELS: Record<LayerKey, string> = {
   car: "Car charging",
   lights: "Lights",
   appliances: "Appliances",
-  rest: "Other + unmonitored",
+  rest: "Other + sub-panel",
 };
 
 /** "Where it went" panel rows — finer than the stack layers. */
@@ -36,7 +36,7 @@ export const PANEL_LABELS = {
   lights: "Lights",
   appliances: "Appliances",
   other: "Other circuits",
-  unmonitored: "Unmonitored",
+  unmonitored: "Washer/dryer/sub-panel",
   baseCharge: "Base charge",
 } as const;
 
